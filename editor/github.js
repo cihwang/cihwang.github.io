@@ -3,7 +3,7 @@ const API = 'https://api.github.com';
 const API_VERSION = '2022-11-28';
 const ACCEPT_JSON = 'application/vnd.github+json';
 const ACCEPT_RAW = 'application/vnd.github.raw+json';
-const COMMIT_ATTEMPTS = 3;
+const COMMIT_RETRIES = 3;
 
 /** GitHub 요청 실패. `status`는 HTTP 상태이고, 네트워크 실패면 0이다. 메시지에 토큰은 없다. */
 export class GitHubError extends Error {
@@ -83,7 +83,8 @@ export function createGitHub({ token, fetch = globalThis.fetch }) {
       Accept: accept,
       'X-GitHub-Api-Version': API_VERSION,
     };
-    const init = { method, headers };
+    // 인증된 GET이 max-age=60으로 캐시되면 재시도·저장 직후 읽기가 옛 값을 본다.
+    const init = { method, headers, cache: 'no-store' };
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
@@ -200,28 +201,26 @@ export function createGitHub({ token, fetch = globalThis.fetch }) {
 
     const tree = await json('POST', `/repos/${repo}/git/trees`, { body: { base_tree: baseTree, tree: entries } });
     const commit = await json('POST', `/repos/${repo}/git/commits`, { body: { message, tree: tree.sha, parents: [parentSha] } });
-    await request('PATCH', `/repos/${repo}/git/refs/heads/${encodeURIComponent(branch)}`, { body: { sha: commit.sha } });
-    return commit.sha;
+    const moved = await request('PATCH', `/repos/${repo}/git/refs/heads/${encodeURIComponent(branch)}`, { body: { sha: commit.sha }, allow: [422] });
+    return moved.status === 422 ? null : commit.sha;
   }
 
   /**
    * 파일 추가·수정·삭제를 한 커밋으로 올린다.
    * `expect`는 경로별로 기대하는 현재 sha(null은 "없어야 함")이고, 다르면 아무것도 만들기 전에 `ConflictError`.
-   * 그 사이 다른 커밋이 끼어들어 ref 갱신이 422면 처음부터 최대 3번 시도하고, 그래도 안 되면 422 `GitHubError`.
+   * 그 사이 다른 커밋이 끼어들어 ref 갱신(PATCH)이 422면 처음부터 최대 3번 다시 시도(첫 시도 포함 4번)하고, 그래도 안 되면 422 `GitHubError`.
+   * 다른 단계의 422는 재시도 없이 바로 던진다.
    * @param {string} repo
    * @param {{ message: string, files: { path: string, base64: string }[], deletes: string[], expect: Record<string, string|null> }} change
    * @returns {Promise<{ commitSha: string }>}
    */
   async function commitFiles(repo, change) {
     const branch = await branchOf(repo);
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        return { commitSha: await tryCommit(repo, branch, change) };
-      } catch (e) {
-        const lostRace = e instanceof GitHubError && !(e instanceof ConflictError) && e.status === 422;
-        if (!lostRace || attempt >= COMMIT_ATTEMPTS) throw e;
-      }
+    for (let attempt = 0; attempt <= COMMIT_RETRIES; attempt += 1) {
+      const commitSha = await tryCommit(repo, branch, change);
+      if (commitSha) return { commitSha };
     }
+    throw new GitHubError(422, `다른 곳에서 계속 커밋이 올라와 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요. (HTTP 422, ${repo} ref 갱신)`);
   }
 
   return { getRepo, getFile, getRaw, putFile, deleteFile, listTree, lastCommitDate, getBlobBase64, commitFiles };

@@ -183,10 +183,26 @@ test('commitFiles: 한 커밋, 삭제는 sha null, 422면 새 ref 기준으로 �
   assert.deepEqual(commits[1].body.parents, ['c1'], '부모는 새 ref');
 });
 
-test('commitFiles: 422가 계속되면 3번 뒤 포기', async () => {
+test('commitFiles: ref 422가 계속되면 첫 시도 + 다시 3번 뒤 포기', async () => {
   const { gh, calls } = client(commitServer({ treeEntries: [], patch422Times: 99 }));
   await assert.rejects(
     gh.commitFiles('o/r', { message: 'm', files: [{ path: 'a', base64: 'QQ==' }], deletes: [], expect: {} }),
     (e) => e instanceof GitHubError && e.status === 422, '422 오류로 끝남');
-  assert.equal(calls.filter((c) => c.method === 'PATCH').length, 3, '최대 3번');
+  assert.equal(calls.filter((c) => c.method === 'PATCH').length, 4, '첫 시도 1 + 다시 3 = 4번');
+});
+
+test('commitFiles: tree 단계 422는 재시도 없이 바로 실패', async () => {
+  const base = commitServer({ treeEntries: [] });
+  const { gh, calls } = client((req) => (req.method === 'POST' && req.url.endsWith('/git/trees') ? { status: 422, json: {} } : base(req)));
+  await assert.rejects(
+    gh.commitFiles('o/r', { message: 'm', files: [{ path: 'a', base64: 'QQ==' }], deletes: [], expect: {} }),
+    (e) => e instanceof GitHubError && e.status === 422, '422 오류');
+  assert.equal(calls.filter((c) => c.url.endsWith('/git/trees') && c.method === 'POST').length, 1, 'tree 요청은 한 번뿐');
+});
+
+test('모든 요청은 브라우저 HTTP 캐시를 쓰지 않는다', async () => {
+  const inits = [];
+  const gh = createGitHub({ token: TOKEN, fetch: async (url, init) => { inits.push(init); return new Response('{"private":false,"default_branch":"main","permissions":{}}'); } });
+  await gh.getRepo('o/r');
+  assert.equal(inits[0].cache, 'no-store', 'cache: no-store');
 });
