@@ -27,7 +27,6 @@
   const SECTOR_SHARE = 0.2;
   const SECTOR_MIN_PX = 140;
   const POST_GAP_PX = 144;         // 1단계: 가장 촘촘한 카테고리의 글 사이 간격(px)
-  const Z_MIN = -0.6;              // 멀리 갈 때 0단계보다 더 물러날 수 있는 한계
   const ZOOM_MS = 900;             // 단계를 바꾸는 확대·축소(영상과 같은 길이)
   const FLIGHT_MS = [420, 0.8, 900]; // 같은 단계 이동: [기본, 화면 거리 1px당 추가, 최대]
   const SNAP = 0.14;               // 60fps 기준 프레임당 목표까지 남은 거리를 좁히는 비율
@@ -43,6 +42,12 @@
   const DIM_RED = 0.4;             // 다른 단계 항목·사이 눈금이 가운데 올 때 '지금 여기' 색의 세기
   const PINCH_STEP = 40;           // 핀치 누적량이 이만큼 넘으면 한 단계 들어가거나 나온다
   const BLUR_MAX = 8;              // 아래로 읽어 내려갈 때 휠이 흐려지는 최대치(px)
+  // 돌리는 손맛: 도는 속도만큼 가운데 근처 눈금이 부풀었다가, 멈추면 살짝 되튀며 가라앉는다. 멈춰 있을 땐 모양 그대로.
+  const STRETCH_PX = 14;           // 가장 빠를 때 가운데 눈금이 바깥으로 늘어나는 길이
+  const STRETCH_FULL_PX = 12;      // 60fps 기준 프레임당 이만큼(화면 거리) 움직이면 최대로 부푼다
+  const LENS_PX = 110;             // 부풂이 퍼지는 반경(가운데에서 화면 거리)
+  const SPRING_K = 0.12;           // 부풂이 속도를 따라가는 힘
+  const SPRING_DAMP = 0.73;        // 60fps 기준 프레임당 감쇠. 1에 가까울수록 오래 출렁인다(지금 약 20% 되튐)
 
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -182,6 +187,9 @@
     flight: null,      // 진행 중인 이동(flyTo)
     pos: -slots[HOME].u,
     vel: 0,            // 칸/프레임(60fps 기준)
+    prevPos: -slots[HOME].u, // 지난 프레임의 pos — 화면에서 도는 속도를 잰다
+    stretch: 0,        // 부푼 정도(0~1, 되튈 때는 잠깐 0보다 작다)
+    stretchVel: 0,
     rotTarget: null,
     cur: HOME,         // 아래에 보여 주는 항목
     aim: -1,           // 돌아가는 중인 항목
@@ -215,7 +223,7 @@
   // 항목이 가운데에서 얼마나 떨어져 있나(칸, 시계 방향 +).
   const deltaOf = (slot) => wrap(slots[slot].u + s.pos);
 
-  // z: 0 = 0단계, 1 = 1단계, 0보다 작으면 더 물러난 상태(멀리 이동하는 도중).
+  // z: 0 = 0단계, 1 = 1단계.
   // 반지름과 칸 간격을 모두 기하 보간한다: 선형으로 키우면 끝에서 갑자기 커져 보인다.
   function geom() {
     const vw = docEl.clientWidth;
@@ -236,6 +244,7 @@
       fineOpacity: clamp((unitPx / FINE - 6) / 10, 0, 1), // 가는 눈금은 간격이 넓어질 때만
       // 확대·축소 한가운데에서 눈금이 잠깐 길고 굵어진다(영상의 중간 프레임과 같은 느낌).
       pulse: f ? f.pulse : 0,
+      stretch: s.stretch,
       // 크게 움직이는 동안은 라벨을 거의 감췄다가 도착하면 다시 띄운다.
       labelDim: f ? 1 - 0.85 * f.pulse : 1
     };
@@ -282,6 +291,13 @@
     return w * strength;
   }
 
+  // 부풂의 모양: 가운데에서 가까운 눈금일수록 많이 받는다(종 모양, LENS_PX 밖은 0). 멈춰 있으면 0.
+  function bumpAt(delta, g) {
+    if (g.stretch === 0) return 0;
+    const x = delta * g.unitPx / LENS_PX;
+    return x * x < 1 ? (1 - x * x) * (1 - x * x) * g.stretch : 0;
+  }
+
   const mixRgb = (a, b, t) => 'rgb(' + a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(',') + ')';
 
   // 눈금 색은 styles.css 변수에서 읽는다. 화이트/블랙이 바뀌면(themechange) 다시 읽는다.
@@ -303,11 +319,13 @@
     if (el._cls !== st.cls) { el.className = st.cls; el._cls = st.cls; }
     el.style.display = '';
     const glow = centerGlow(delta, st);
-    const ext = st.ext + lerp(8, 16, g.e) * glow;
-    const o = Math.max(st.o, glow);
+    const bump = bumpAt(delta, g);
+    const ext = st.ext + lerp(8, 16, g.e) * glow + STRETCH_PX * bump;
+    // 옅은 바탕 눈금도 부푸는 동안은 진해져야 움직임이 보인다.
+    const o = Math.max(st.o + (1 - st.o) * Math.max(0, bump), glow);
     el.style.opacity = o > 0.99 ? '' : o.toFixed(2);
     el.style.backgroundColor = glow > 0.01 ? mixRgb(st.rgb, palette.accent, glow) : '';
-    el.style.height = ((st.len + ext) * (1 + 0.5 * g.pulse)).toFixed(1) + 'px';
+    el.style.height = Math.max(1, (st.len + ext) * (1 + 0.5 * g.pulse)).toFixed(1) + 'px';
     const w = 1 + 0.6 * g.pulse + 0.4 * glow;
     el.style.width = w > 1.02 ? w.toFixed(2) + 'px' : '';
     el.style.transform = 'translate(' + g.cx.toFixed(1) + 'px,' + g.cy.toFixed(1) + 'px) rotate(' + (delta * g.stepDeg).toFixed(3) + 'deg) translateY(' + (-(g.R + ext)).toFixed(1) + 'px) translateX(-50%)';
@@ -330,7 +348,7 @@
       base.candidate = onUnit || s.finesVisible;
       drawTick(f / FINE + s.pos, base, g);
     }
-    // 항목 눈금: 한 바퀴가 화면보다 짧아지면(멀리 이동 중) 양쪽 반복분도 그린다.
+    // 항목 눈금: 한 바퀴가 화면보다 짧으면(0단계) 양쪽 반복분도 그린다.
     slots.forEach((_, i) => {
       const d0 = deltaOf(i);
       const st = itemStyle(i, g);
@@ -354,7 +372,8 @@
       const isGroup = slot.kind !== 'post';
       const atCenter = lb.slot === s.centerSlot;
       const isRed = atCenter && s.centerIsTarget;
-      const ext = isRed ? lerp(22, 34, g.e) : isGroup ? lerp(12, 4, g.e) : lerp(0, 12, g.e);
+      // 라벨도 자기 눈금과 함께 부풂을 탄다(눈금이 라벨에 닿지 않게).
+      const ext = (isRed ? lerp(22, 34, g.e) : isGroup ? lerp(12, 4, g.e) : lerp(0, 12, g.e)) + STRETCH_PX * bumpAt(deltaOf(lb.slot), g);
       const reach = g.R + ext + 8 + Math.abs(Math.sin(ar)) * lb.w / 2 + Math.abs(Math.cos(ar)) * lb.h / 2;
       const x = g.cx + reach * Math.sin(ar);
       const y = g.cy - reach * Math.cos(ar);
@@ -475,44 +494,50 @@
       }
     }
 
+    active = stepStretch(k) || active;
     render();
     if (active) s.raf = requestAnimationFrame(frame);
   }
 
-  // 모든 '이동'은 한 번의 비행이다: 원 위에서 가까운 쪽으로 돌면서 동시에 확대·축소한다.
-  // - 단계가 바뀌면(안으로·밖으로) 0 ↔ 1로 확대·축소하고,
-  // - 같은 단계에서 멀리 가면 가는 동안 원이 잠깐 물러났다(축소) 도착하며 다시 다가온다(확대).
-  //   글 단계는 다른 카테고리의 글로 넘어갈 때, 홈·카테고리 단계는 두 칸 이상 건너뛸 때만. 가까운 이동은 돌기만 한다.
+  // 지난 프레임부터 화면에서 돈 거리를 부풂의 목표로 삼아 스프링으로 따라간다(빠르면 부풀고, 멈추면 되튀며 가라앉는다).
+  // 확대·축소 비행에는 이미 맥동(pulse)이 있어서 그만큼 줄인다.
+  function stepStretch(k) {
+    const movedPx = Math.abs(s.pos - s.prevPos) * geom().unitPx / Math.max(1, k);
+    s.prevPos = s.pos;
+    if (reduceMotion) { s.stretch = 0; s.stretchVel = 0; return false; }
+    const calm = s.flight ? 1 - s.flight.strength : 1;
+    const target = clamp(movedPx / STRETCH_FULL_PX, 0, 1) * calm;
+    s.stretchVel += (target - s.stretch) * SPRING_K * k;
+    s.stretchVel *= Math.pow(SPRING_DAMP, k);
+    s.stretch += s.stretchVel * k;
+    if (target === 0 && Math.abs(s.stretch) < 0.002 && Math.abs(s.stretchVel) < 0.002) {
+      s.stretch = 0;
+      s.stretchVel = 0;
+      return false;
+    }
+    return true;
+  }
+
+  // 모든 '이동'은 한 번의 비행이다: 원 위에서 가까운 쪽으로 돈다. 단계가 바뀌면(안으로·밖으로) 동시에 0 ↔ 1로 확대·축소한다.
+  // 같은 단계의 이동은 멀어도 원이 물러나지 않는다(눈금이 모였다 펼쳐지는 대신, 도는 동안 가운데 눈금이 부푼다: stepStretch).
   // 아래 내용은 비행 한가운데에서 바뀐다(흐려졌다가 도착하며 또렷해진다).
   function flyTo(slot, level) {
     const fromPos = s.pos;
     const toPos = s.pos - deltaOf(slot);
     const fromZ = s.z;
     const toZ = level;
-    const dist = Math.abs(toPos - fromPos);
     const levelChange = Math.abs(toZ - fromZ) > 0.5;
-    let dip = 0;
-    if (!levelChange) {
-      if (level === 1) {
-        if (slots[nearestItem().slot].catIndex !== slots[slot].catIndex) dip = clamp(0.15 + dist / 40, 0.15, 0.55);
-      } else {
-        const list = targets[0];
-        const di = Math.abs(list.indexOf(slot) - list.indexOf(nearestTarget(0)));
-        const steps = Math.min(di, list.length - di);
-        if (steps >= 2) dip = clamp(steps * 0.12, 0, 0.45);
-      }
-    }
-    const distPx = dist * geom().unitPx;
-    const dur = levelChange ? ZOOM_MS : Math.min(FLIGHT_MS[2], FLIGHT_MS[0] + distPx * FLIGHT_MS[1] + dip * 300);
+    const distPx = Math.abs(toPos - fromPos) * geom().unitPx;
+    const dur = levelChange ? ZOOM_MS : Math.min(FLIGHT_MS[2], FLIGHT_MS[0] + distPx * FLIGHT_MS[1]);
     s.level = level;
     s.aim = slot;
     s.vel = 0;
     s.rotTarget = null;
     s.flight = {
       start: performance.now(), dur: reduceMotion ? 0 : dur,
-      fromPos: fromPos, toPos: toPos, fromZ: fromZ, toZ: toZ, dip: dip,
+      fromPos: fromPos, toPos: toPos, fromZ: fromZ, toZ: toZ,
       swapSlot: slot !== s.cur ? slot : null, swapped: false,
-      strength: clamp(Math.abs(toZ - fromZ) + dip * 1.5, 0, 1),
+      strength: clamp(Math.abs(toZ - fromZ), 0, 1),
       pulse: 0
     };
     kick();
@@ -524,7 +549,7 @@
     const e = easeInOut(t);
     const arc = Math.sin(Math.PI * t);
     s.pos = lerp(f.fromPos, f.toPos, e);
-    s.z = Math.max(Z_MIN, lerp(f.fromZ, f.toZ, e) - f.dip * arc);
+    s.z = lerp(f.fromZ, f.toZ, e);
     f.pulse = arc * f.strength;
     if (f.swapSlot != null) {
       // 내용: 출발하며 흐려지고, 한가운데에서 바뀌고, 도착하며 또렷해진다.
@@ -800,7 +825,7 @@
     d.samples.push({ t: e.timeStamp, d: delta, px: Math.abs(delta) * g.unitPx });
     if (d.samples.length > 8) d.samples.shift();
     s.hover = { x: e.clientX, y: e.clientY };
-    render();
+    kick(); // 그리기는 프레임에서: 부풂 스프링이 같은 박자로 돈다
   });
 
   function endDrag(e) {
@@ -861,7 +886,6 @@
       step(Math.sign(delta));
       return;
     }
-    if (s.raf != null) { cancelAnimationFrame(s.raf); s.raf = null; }
     cancelFlight();
     s.pos -= delta / geom().unitPx;
     s.vel = 0;
@@ -869,7 +893,7 @@
     s.aim = -1;
     s.wheelLog.push({ t: e.timeStamp, px: Math.abs(delta) });
     if (s.wheelLog.length > 40) s.wheelLog.shift();
-    render();
+    kick(); // 그리기는 프레임에서(wheelTimer가 걸려 있는 동안 프레임은 pos를 건드리지 않는다)
     clearTimeout(s.wheelTimer);
     s.wheelTimer = setTimeout(() => {
       s.wheelTimer = null;
@@ -914,6 +938,7 @@
   if (start !== HOME) {
     if (slots[start].kind === 'post') { s.level = 1; s.z = 1; }
     s.pos = -slots[start].u;
+    s.prevPos = s.pos; // 첫 프레임이 시작 위치로의 점프를 '빠른 회전'으로 잘못 재지 않게
     setCurrent(start, true);
   } else {
     updateHub();
