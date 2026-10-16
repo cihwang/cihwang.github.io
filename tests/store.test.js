@@ -219,8 +219,9 @@ test('saveDraft: 두 번째 저장은 첫 저장의 sha를 쓰고, 그 사이 �
   const first = await store.saveDraft(doc);
   const path = 'posts/2026-10-16-새-글-하나.md';
   assert.equal(first.draftPath, path, '경로는 날짜 + 제목에서 만든 slug');
-  assert.equal(fake.calls[0].args.sha, undefined, '새 파일은 sha 없이 올린다');
-  assert.equal(fake.calls[0].args.message, '초안: 새 글 하나', '초안 저장 메시지');
+  const put = fake.calls.find((c) => c.method === 'putFile');
+  assert.equal(put.args.sha, undefined, '새 파일은 sha 없이 올린다');
+  assert.equal(put.args.message, '초안: 새 글 하나', '초안 저장 메시지');
   assert.equal(first.draftSha, fake.sha(DRAFTS, path), '새 draftSha를 돌려준다');
   assert.equal(parsePost(fake.text(DRAFTS, path)).meta.draft, 'true', '초안에는 draft: true가 붙는다');
 
@@ -232,6 +233,20 @@ test('saveDraft: 두 번째 저장은 첫 저장의 sha를 쓰고, 그 사이 �
   fake.overwrite(DRAFTS, path, post({ title: '새 글 하나', category: '글', draft: 'true' }, '다른 기기\n'));
   await assert.rejects(store.saveDraft({ ...second, body: '셋째 줄\n' }), ConflictError, '다른 기기의 저장과 부딪히면 ConflictError');
   assert.equal(parsePost(fake.text(DRAFTS, path)).body, '다른 기기\n', '다른 기기 내용을 덮어쓰지 않는다');
+});
+
+test('saveDraft: 새 글의 경로에 공개된 글이 이미 있으면 아무것도 쓰지 않고 오류', async () => {
+  const fake = standardFake();
+  // 초안 저장소에는 이 경로가 없어서, 막지 않으면 putFile이 그대로 성공해 버린다.
+  const live = 'posts/2026-10-16-b.md';
+  fake.overwrite(BLOG, live, post({ title: '공개된 B', category: '공부', date: '2026-10-16' }));
+  const before = fake.text(BLOG, live);
+  const store = await storeWithSite(fake);
+  const doc = { ...store.newDoc('글'), meta: { title: '전혀 다른 글', category: '글', date: '2026-10-16', slug: 'b', draft: 'true' }, body: '새 글\n' };
+  await assert.rejects(store.saveDraft(doc), /같은 날짜·주소/, '주소를 바꾸라고 알린다');
+  assert.ok(!fake.calls.some((c) => ['putFile', 'commitFiles', 'deleteFile'].includes(c.method)), '어느 저장소에도 쓰지 않는다');
+  assert.equal(fake.text(BLOG, live), before, '공개된 글은 그대로');
+  assert.equal(fake.has(DRAFTS, live), false, '초안 저장소에도 만들지 않는다');
 });
 
 test('saveDraft: 공개된 글을 고치면 초안 저장소의 같은 경로에 저장하고 블로그는 그대로', async () => {
@@ -309,6 +324,25 @@ test('publish(새 글): 검사 오류면 GitHub에 쓰지 않는다', async () =
   const live = [...LIVE, { path: 'posts/2026-09-01-hello.md', cat: '글', slug: 'hello', title: '다른 글' }];
   await assert.rejects(store.publish(doc, live), /같은 주소/, '같은 카테고리에 같은 slug면 오류');
   assert.ok(!fake.calls.some((c) => ['commitFiles', 'putFile', 'deleteFile'].includes(c.method)), '쓰기 호출이 없다');
+});
+
+test('publish: 본문의 사진이 어느 저장소에도 없으면 커밋하지 않고 경로를 알린다, 초안은 남는다', async () => {
+  const fake = standardFake();
+  const path = 'posts/2026-10-16-photo.md';
+  fake.overwrite(DRAFTS, path, post(
+    { title: '사진 글', category: '글', date: '2026-10-16', slug: 'photo', draft: 'true' },
+    '![아직 올리는 중](../media/x.png)\n![있는 사진](../media/new.png)\n',
+  ));
+  const store = await storeWithSite(fake);
+  const doc = await store.open({ repo: 'drafts', path });
+  await assert.rejects(store.publish(doc, LIVE), (e) => {
+    assert.match(e.message, /media\/x\.png/, '없는 사진 경로를 담는다');
+    assert.doesNotMatch(e.message, /media\/new\.png/, '있는 사진은 오류에 넣지 않는다');
+    return true;
+  }, '사진이 빠진 채 출간하지 않는다');
+  assert.equal(fake.commits.length, 0, '커밋 0번');
+  assert.ok(!fake.calls.some((c) => c.method === 'deleteFile'), '초안을 지우지 않는다');
+  assert.equal(fake.has(DRAFTS, path), true, '초안은 그대로');
 });
 
 test('publish(공개된 글의 slug 변경): deletes에 옛 경로, expect는 옛 sha', async () => {

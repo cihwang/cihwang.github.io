@@ -110,13 +110,18 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
    * 초안 저장소에 임시저장한다(`draft: true`를 붙여). 경로는 `draftPath`, 없으면 `blogPath`, 없으면 날짜·slug로 만든다.
    * 공개본은 건드리지 않는다.
    * @returns {Promise<object>} 새 `draftPath`·`draftSha`가 든 Doc
-   * @throws {Error} 제목·카테고리 검사 실패(GitHub 호출 없음). 그 사이 다른 기기가 저장했으면 `ConflictError`.
+   * @throws {Error} 제목·카테고리 검사 실패(GitHub 호출 없음). 새 글의 경로에 공개된 글이 이미 있으면(쓰기 전).
+   *   그 사이 다른 기기가 저장했으면 `ConflictError`.
    */
   async function saveDraft(doc) {
     const errors = validateDraft(doc.meta, await categories());
     if (errors.length) throw new Error(`임시저장할 수 없어요: ${errors.join(', ')}`);
     const meta = { ...doc.meta, draft: 'true' };
     const path = doc.draftPath ?? doc.blogPath ?? postPath(meta.date, meta.slug || slugFromTitle(meta.title));
+    // 새 글이 공개된 다른 글과 같은 경로를 잡으면, 나중에 그 글을 "고치는 중"으로 보고 출간 때 덮어쓴다.
+    if (!doc.draftPath && !doc.blogPath && await gh.getFile(blogRepo, path)) {
+      throw new Error(`같은 날짜·주소의 공개된 글이 이미 있어요. 주소(slug)를 바꿔 주세요. (${path})`);
+    }
     const { sha } = await gh.putFile(draftsRepo, path, {
       text: serializePost(meta, doc.body), sha: doc.draftSha ?? undefined, message: `초안: ${titleOf(meta)}`,
     });
@@ -140,7 +145,7 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
    * slug·날짜를 바꾸면 `postPath(date, slug)`로 옮기고 옛 경로를 같은 커밋에서 지운다. 사진은 블로그에 없는 것만 복사한다.
    * @param {{ path: string, cat: string, slug: string }[]} livePosts 같은 카테고리 slug 겹침 검사용
    * @returns {Promise<{ path: string, alreadyPublished: boolean }>} `path`는 블로그의 글 경로
-   * @throws {Error} 출간 검사 오류(쓰기 전). 공개본이 그 사이 바뀌었거나 대상 자리에 다른 글이 있으면 `ConflictError`.
+   * @throws {Error} 출간 검사 오류, 또는 본문의 사진이 어느 저장소에도 없을 때(쓰기 전, 초안은 남는다). 공개본이 그 사이 바뀌었거나 대상 자리에 다른 글이 있으면 `ConflictError`.
    *   초안 삭제가 실패하면 그 오류를 던진다(블로그 커밋은 이미 됐고, 다시 부르면 초안 삭제만 한다).
    */
   async function publish(doc, livePosts) {
@@ -171,15 +176,20 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
     return { path: target, alreadyPublished: existing?.text === text };
   }
 
-  /** 본문이 가리키는 사진 중 블로그에 없고 초안 저장소에 있는 것을 `{ path, base64 }`로. 어디에도 없는 것은 건너뛴다. */
+  /**
+   * 본문이 가리키는 사진 중 블로그에 없고 초안 저장소에 있는 것을 `{ path, base64 }`로.
+   * 어디에도 없는 사진(아직 올리는 중 등)이 있으면 던진다 — 깨진 그림으로 출간되면 같은 내용 다시 누르기로는 고쳐지지 않는다.
+   */
   async function mediaToCopy(body) {
     const refs = mediaRefs(body);
     if (!refs.length) return [];
     const [blogTree, draftTree] = await Promise.all([gh.listTree(blogRepo), gh.listTree(draftsRepo)]);
     const inBlog = new Set(blogTree.map((e) => e.path));
     const draftSha = new Map(draftTree.map((e) => [e.path, e.sha]));
-    const missing = refs.filter((p) => !inBlog.has(p) && draftSha.has(p));
-    return Promise.all(missing.map(async (path) => ({ path, base64: await gh.getBlobBase64(draftsRepo, draftSha.get(path)) })));
+    const nowhere = refs.filter((p) => !inBlog.has(p) && !draftSha.has(p));
+    if (nowhere.length) throw new Error(`본문의 사진을 찾지 못해 출간하지 않았어요. 사진을 다시 올려 주세요. (${nowhere.join(', ')})`);
+    const toCopy = refs.filter((p) => !inBlog.has(p));
+    return Promise.all(toCopy.map(async (path) => ({ path, base64: await gh.getBlobBase64(draftsRepo, draftSha.get(path)) })));
   }
 
   /** 초안을 지운다. `sha`가 그 사이 바뀌었으면(다른 기기 저장) GitHub 오류. 이미 없으면 성공. */
