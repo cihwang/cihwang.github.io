@@ -815,9 +815,31 @@
     fillRows(catRows, list);
   }
 
+  // 로그인한 기기에서만 수정·글쓰기 링크를 만든다. 키 문자열은 editor/config.js의 AUTH_KEY와 같아야 한다
+  // (wheel.js는 모듈이 아니라 import하지 못한다). 읽기 실패(시크릿 창 등)는 "없음"으로 본다.
+  const hasEditorAuth = (() => {
+    try { return localStorage.getItem('blog.editor.auth') != null; } catch (err) { return false; }
+  })();
+  if (hasEditorAuth) {
+    const footLinks = $('.foot-links');
+    const writeLink = document.createElement('a');
+    writeLink.className = 'editor-link';
+    writeLink.href = 'write.html#/new';
+    writeLink.textContent = '글쓰기';
+    if (footLinks) footLinks.appendChild(writeLink);
+  }
+
   function fillPost(slot) {
     const p = slots[slot].post;
     postMeta.textContent = [p.cat, p.date ? fmtDate(p.date) : null, p.draft ? '초안' : null].filter(Boolean).join(' · ');
+    // textContent를 다시 쓰면 지난 글의 링크는 지워지므로 글을 옮겨도 겹치지 않는다.
+    if (hasEditorAuth && p.path) {
+      const editLink = document.createElement('a');
+      editLink.className = 'editor-link';
+      editLink.href = 'write.html#/edit?repo=blog&path=' + encodeURIComponent(p.path);
+      editLink.textContent = '수정';
+      postMeta.append(' · ', editLink);
+    }
     postTitle.textContent = p.title;
     // 본문 HTML은 build.js가 내 글(posts/*.md)에서 만든 것이라 그대로 넣는다. 남의 입력이 들어오는 자리가 아니다.
     postBody.innerHTML = p.html || '<p class="is-placeholder">[본문]</p>';

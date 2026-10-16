@@ -40,6 +40,8 @@ jobs:
           mkdir -p _site
           cp index.html styles.css wheel.js sky.js help.js posts.json _site/
           cp -r media _site/
+          cp write.html _site/
+          cp -r editor _site/
           # 에디터가 브라우저에서 markdown.js를 import map으로 불러오는 데 필요한 것들
           node tools/vendor.js
           cp markdown.js _site/
