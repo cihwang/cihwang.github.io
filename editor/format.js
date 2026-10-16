@@ -4,7 +4,8 @@ const HEADING = /^#{1,6} /;
 
 function prefixLines(text, start, end, kind) {
   const prefix = LINE_PREFIX[kind];
-  const from = text.lastIndexOf('\n', start - 1) + 1;
+  // start 가 0 이면 lastIndexOf 의 음수 위치가 0 으로 잘려 첫 글자 \n 을 줄 끝으로 오인한다.
+  const from = start === 0 ? 0 : text.lastIndexOf('\n', start - 1) + 1;
   const found = text.indexOf('\n', end);
   const to = found === -1 ? text.length : found;
   const lines = text.slice(from, to).split('\n');
