@@ -20,7 +20,7 @@ _build_lock = threading.Lock()
 
 
 def _latest_source_mtime() -> float:
-    sources = [ROOT / "site.json", ROOT / "build.js", *ROOT.joinpath("posts").rglob("*.md")]
+    sources = [ROOT / "site.json", ROOT / "build.js", ROOT / "markdown.js", *ROOT.joinpath("posts").rglob("*.md")]
     return max(p.stat().st_mtime for p in sources if p.exists())
 
 

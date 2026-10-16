@@ -4,7 +4,8 @@
   "type": "module",
   "description": "posts/*.md → posts.json. 화면은 index.html + wheel.js가 그린다.",
   "scripts": {
-    "build": "node build.js"
+    "build": "node build.js",
+    "test": "node --test"
   },
   "dependencies": {
     "gemoji": "8.1.0",

@@ -10,16 +10,9 @@
  *   - 사진·GIF·영상은 media/ 에 두고 ![설명](../media/파일) 로 넣는다(편집기 미리보기에서도 보이게 ../ 를 붙인다).
  */
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative, basename } from 'node:path';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Marked } from 'marked';
-import { markedHighlight } from 'marked-highlight';
-import hljs from 'highlight.js';
-import markedFootnote from 'marked-footnote';
-import { gfmHeadingId, resetHeadings } from 'marked-gfm-heading-id';
-import markedKatex from 'marked-katex-extension';
-import { markedEmoji } from 'marked-emoji';
-import { nameToEmoji } from 'gemoji';
+import { splitFrontMatter, renderMarkdown, slugFromPath } from './markdown.js';
 
 // 경로에 한글이 있어도 깨지지 않게 fileURLToPath로 푼다(URL.pathname은 %ED… 로 남는다).
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
@@ -29,50 +22,6 @@ const withDrafts = process.argv.includes('--drafts');
 
 const config = JSON.parse(readFileSync(join(ROOT, 'site.json'), 'utf8'));
 
-// ── 마크다운 → HTML ───────────────────────────────────────
-const VIDEO = /\.(mp4|webm|mov|m4v)$/i;
-const YOUTUBE = /^https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]{11})/i;
-
-const escapeAttr = (s) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-// 글 폴더(posts/…)에서 편집기 미리보기용으로 쓴 ../media/ 를 사이트 기준 media/ 로 바꾼다.
-const mediaUrl = (href) => href.replace(/^(\.\.\/)+media\//, 'media/');
-
-const marked = new Marked(
-  markedHighlight({
-    emptyLangClass: 'hljs',
-    langPrefix: 'hljs language-',
-    highlight(code, lang) {
-      const language = hljs.getLanguage(lang) ? lang : 'plaintext';
-      return hljs.highlight(code, { language }).value;
-    }
-  }),
-  markedFootnote({ description: '각주' }),
-  gfmHeadingId({ prefix: 'h-' }),
-  markedKatex({ throwOnError: false, nonStandard: true }),
-  markedEmoji({ emojis: nameToEmoji, renderer: (token) => token.emoji }),
-  {
-    renderer: {
-      // 그림 문법 하나로 사진·GIF·영상·유튜브를 모두 넣는다. "제목"을 쓰면 아래 설명(캡션)이 된다.
-      image({ href, title, text }) {
-        const caption = title ? '<figcaption>' + escapeAttr(title) + '</figcaption>' : '';
-        const yt = YOUTUBE.exec(href);
-        if (yt) {
-          return '<figure class="media media-embed"><iframe src="https://www.youtube-nocookie.com/embed/' + yt[1] +
-            '" title="' + escapeAttr(text || title || 'YouTube 영상') + '" loading="lazy" allow="encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>' + caption + '</figure>';
-        }
-        const [path, flag] = mediaUrl(href).split('#');
-        if (VIDEO.test(path)) {
-          // #loop: GIF처럼 소리 없이 자동 반복. 없으면 재생 단추가 있는 보통 영상.
-          const attrs = flag === 'loop' ? 'autoplay muted loop playsinline' : 'controls playsinline preload="metadata"';
-          return '<figure class="media"><video src="' + escapeAttr(path) + '" ' + attrs + ' aria-label="' + escapeAttr(text) + '"></video>' + caption + '</figure>';
-        }
-        return '<figure class="media"><img src="' + escapeAttr(path) + '" alt="' + escapeAttr(text) + '" loading="lazy" decoding="async">' + caption + '</figure>';
-      }
-    }
-  }
-);
-
 // ── 글 파일 읽기 ─────────────────────────────────────────
 function listMarkdown(dir) {
   return readdirSync(dir).flatMap((name) => {
@@ -81,18 +30,6 @@ function listMarkdown(dir) {
     if (statSync(full).isDirectory()) return listMarkdown(full);
     return name.toLowerCase().endsWith('.md') ? [full] : [];
   });
-}
-
-// 맨 위 --- 사이의 "키: 값" 줄만 읽는다(따옴표는 벗긴다).
-function splitFrontMatter(text) {
-  const m = /^﻿?---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
-  if (!m) return { meta: {}, body: text };
-  const meta = {};
-  m[1].split(/\r?\n/).forEach((line) => {
-    const i = line.indexOf(':');
-    if (i > 0) meta[line.slice(0, i).trim()] = line.slice(i + 1).trim().replace(/^(["'])(.*)\1$/, '$2');
-  });
-  return { meta, body: text.slice(m[0].length) };
 }
 
 const errors = [];
@@ -106,16 +43,18 @@ listMarkdown(POSTS_DIR).forEach((file) => {
   if (!meta.title) errors.push(where + ': title이 없어요');
   if (!config.categories.includes(meta.category)) errors.push(where + ': category "' + (meta.category || '') + '"는 site.json에 없어요 (' + config.categories.join(', ') + ')');
   if (meta.date && !/^\d{4}-\d{2}-\d{2}$/.test(meta.date)) errors.push(where + ': date는 YYYY-MM-DD 형식이어야 해요 (지금: ' + meta.date + ')');
-  const slug = meta.slug || basename(file, '.md').replace(/^\d{4}-\d{2}-\d{2}-/, '');
-  resetHeadings();
+  // 에디터가 글 파일을 찾아가는 경로라 구분자는 OS와 상관없이 /.
+  const path = where.split(/[\\/]/).join('/');
+  const slug = meta.slug || slugFromPath(path);
   posts.push({
     cat: meta.category,
     title: meta.title,
     date: meta.date || '',
     slug: slug,
     draft: draft,
-    html: body.trim() ? marked.parse(body) : '',
-    file: where
+    html: renderMarkdown(body),
+    file: where,
+    path: path
   });
 });
 
@@ -144,8 +83,7 @@ posts.forEach((p) => { delete p.file; });
 let help = null;
 if (withDrafts) {
   const { meta, body } = splitFrontMatter(readFileSync(join(POSTS_DIR, '_글쓰기-도움말.md'), 'utf8'));
-  resetHeadings();
-  help = { title: meta.title || '글쓰기 도움말', html: marked.parse(body) };
+  help = { title: meta.title || '글쓰기 도움말', html: renderMarkdown(body) };
 }
 
 writeFileSync(OUT, JSON.stringify({ site: config.site, categories: config.categories, posts: posts, help: help }));
