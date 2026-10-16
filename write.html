@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>글쓰기</title>
+<!-- 글꼴은 사이트(index.html)와 같은 것. 토큰이 있는 페이지라 글꼴 CSS 말고는 바깥에서 아무것도 불러오지 않는다. -->
+<link href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@kfonts/d2coding@0.2.0/index.css" rel="stylesheet">
+<!-- 수식 모양: 사이트와 같은 버전을 node_modules에서 직접 쓴다(배포 때 복사된다). -->
+<link rel="stylesheet" href="node_modules/katex/dist/katex.min.css">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="editor/editor.css">
+<script>
+  // 사이트와 같은 화이트/블랙 결정(index.html에서 복사). 그리기 전에 정해야 흰 화면이 번쩍이지 않는다.
+  (() => {
+    let saved = null;
+    try { saved = localStorage.getItem('theme'); } catch (err) { /* 저장소를 못 쓰면 운영체제 설정을 따른다 */ }
+    const system = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = saved === 'light' || saved === 'dark' ? saved : system;
+  })();
+</script>
+<!-- 미리보기가 build.js와 같은 markdown.js를 쓰도록 패키지를 node_modules·vendor에서 바로 연결한다(번들러 없음). -->
+<script type="importmap">
+{
+  "imports": {
+    "marked": "./node_modules/marked/lib/marked.esm.js",
+    "marked-highlight": "./node_modules/marked-highlight/src/index.js",
+    "marked-footnote": "./node_modules/marked-footnote/dist/index.js",
+    "marked-gfm-heading-id": "./node_modules/marked-gfm-heading-id/src/index.js",
+    "github-slugger": "./node_modules/github-slugger/index.js",
+    "marked-katex-extension": "./node_modules/marked-katex-extension/lib/index.esm.js",
+    "katex": "./node_modules/katex/dist/katex.mjs",
+    "marked-emoji": "./node_modules/marked-emoji/src/index.js",
+    "gemoji": "./node_modules/gemoji/index.js",
+    "highlight.js": "./vendor/highlight.js"
+  }
+}
+</script>
+<script type="module" src="editor/app.js"></script>
+</head>
+<body class="editor-page">
+<main class="ed-app" data-role="app"><p class="ed-loading">불러오는 중…</p></main>
+
+<!-- 묻기 창 하나를 모든 확인(삭제·나가기·기기 저장본 고르기)이 같이 쓴다. 단추 value가 고른 답이다. -->
+<dialog class="ed-ask" data-role="ask" aria-labelledby="ask-text">
+  <form method="dialog">
+    <p id="ask-text" data-role="ask-text"></p>
+    <div class="ed-ask-actions" data-role="ask-actions"></div>
+  </form>
+</dialog>
+
+<template data-tpl="login">
+  <section class="ed-page" aria-labelledby="login-title">
+    <h1 id="login-title" class="ed-h1">글쓰기 로그인</h1>
+    <div class="ed-notices" data-role="notices" role="alert"></div>
+    <form class="ed-form" data-role="login-form" novalidate>
+      <label class="ed-field">
+        <span>GitHub 토큰</span>
+        <input type="password" name="token" autocomplete="off" spellcheck="false" required>
+      </label>
+      <label class="ed-field">
+        <span>초안 저장소 (owner/name)</span>
+        <input type="text" name="draftsRepo" placeholder="cihwang/blog-drafts" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      </label>
+      <button type="submit" class="ed-btn is-primary" data-role="login-submit">확인</button>
+      <p class="ed-form-msg" data-role="login-msg" role="status"></p>
+    </form>
+    <details class="ed-howto" open>
+      <summary>토큰 만드는 법</summary>
+      <ol>
+        <li>GitHub에서 Settings → Developer settings → Personal access tokens →
+          <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained tokens</a>으로 가서 새 토큰을 만들어요.</li>
+        <li>Resource owner는 <code>cihwang</code>으로 골라요.</li>
+        <li>Repository access는 <b>Only select repositories</b>로 두고, <code>cihwang.github.io</code>와 초안 저장소 두 개만 넣어요.</li>
+        <li>Permissions → Repository permissions → <b>Contents</b>를 <b>Read and write</b>로 바꿔요. Metadata 읽기는 저절로 붙어요.</li>
+        <li>만료일은 원하는 대로 정해요. 만든 토큰을 복사해 위 칸에 붙여넣어요.</li>
+        <li>토큰은 이 기기 브라우저에만 저장돼요. 채팅이나 다른 곳에는 붙여넣지 마세요.</li>
+      </ol>
+    </details>
+  </section>
+</template>
+
+<template data-tpl="list">
+  <section class="ed-page" aria-labelledby="list-title">
+    <header class="ed-page-head">
+      <h1 id="list-title" class="ed-h1">임시글</h1>
+      <nav class="ed-page-nav" aria-label="에디터 메뉴" data-role="list-nav">
+        <button type="button" class="ed-btn is-quiet" data-role="logout">로그아웃</button>
+      </nav>
+    </header>
+    <a class="ed-btn is-primary ed-new" href="#/new">새 글 쓰기</a>
+    <div class="ed-notices" data-role="notices" role="alert"></div>
+    <p class="ed-form-msg" data-role="status" role="status">불러오는 중…</p>
+    <ul class="ed-drafts" data-role="drafts" aria-label="임시글 목록"></ul>
+  </section>
+</template>
+
+<template data-tpl="draft-row">
+  <li class="ed-draft">
+    <div class="ed-draft-main">
+      <span class="ed-draft-title" data-role="title"></span>
+      <span class="ed-draft-meta">
+        <span data-role="cat"></span>
+        <time data-role="time"></time>
+        <span class="ed-badge" data-role="kind" hidden></span>
+      </span>
+    </div>
+    <div class="ed-draft-actions">
+      <button type="button" class="ed-btn" data-role="open">이어 쓰기</button>
+      <button type="button" class="ed-btn is-quiet" data-role="delete">삭제</button>
+    </div>
+  </li>
+</template>
+
+<template data-tpl="editor">
+  <div class="ed-editor" data-pane="write">
+    <!-- 768px 미만에서만 보이는 쓰기/미리보기 탭 -->
+    <div class="ed-tabs" role="tablist" aria-label="쓰기와 미리보기">
+      <button type="button" role="tab" id="tab-write" aria-controls="pane-write" aria-selected="true" data-tab="write">쓰기</button>
+      <button type="button" role="tab" id="tab-preview" aria-controls="pane-preview" aria-selected="false" tabindex="-1" data-tab="preview">미리보기</button>
+    </div>
+    <section class="ed-write" id="pane-write" role="tabpanel" aria-labelledby="tab-write">
+      <div class="ed-notices" data-role="notices" role="alert"></div>
+      <textarea class="ed-title" data-role="title" rows="1" placeholder="제목을 입력하세요" aria-label="제목"></textarea>
+      <fieldset class="ed-cats">
+        <legend class="sr-only">카테고리</legend>
+        <div class="ed-cats-list" data-role="cats"></div>
+      </fieldset>
+      <div class="ed-toolbar" role="toolbar" aria-label="서식" data-role="toolbar">
+        <button type="button" data-format="h2" aria-label="H2 제목">H2</button>
+        <button type="button" data-format="h3" aria-label="H3 제목">H3</button>
+        <button type="button" data-format="h4" aria-label="H4 제목">H4</button>
+        <span class="ed-sep" aria-hidden="true"></span>
+        <button type="button" data-format="bold" aria-label="B 굵게 (Ctrl+B)">B</button>
+        <button type="button" data-format="italic" aria-label="I 기울임 (Ctrl+I)">I</button>
+        <button type="button" data-format="strike" aria-label="S 취소선">S</button>
+        <span class="ed-sep" aria-hidden="true"></span>
+        <button type="button" data-format="quote" aria-label="인용">인용</button>
+        <button type="button" data-format="link" aria-label="링크">링크</button>
+        <button type="button" data-action="photo" aria-label="사진">사진</button>
+        <button type="button" data-format="code" aria-label="코드">코드</button>
+      </div>
+      <textarea class="ed-body" data-role="body" placeholder="이야기를 적어 보세요…" aria-label="본문" spellcheck="false"></textarea>
+    </section>
+    <section class="ed-preview" id="pane-preview" role="tabpanel" aria-labelledby="tab-preview">
+      <h2 class="post-title" data-role="preview-title"></h2>
+      <div class="post-body" data-role="preview-body"></div>
+    </section>
+    <footer class="ed-bar" data-role="bar">
+      <button type="button" class="ed-btn is-quiet" data-role="exit">← 나가기</button>
+      <p class="ed-save-status" data-role="status" role="status"></p>
+      <button type="button" class="ed-btn" data-role="save">임시저장</button>
+      <button type="button" class="ed-btn is-primary" data-role="publish">출간하기</button>
+    </footer>
+  </div>
+</template>
+</body>
+</html>
