@@ -36,6 +36,11 @@ def rebuild_if_stale() -> bool:
         return result.returncode == 0
 
 
+class DevServer(ThreadingHTTPServer):
+    # 에디터 미리보기는 언어 모듈 ~200개를 한꺼번에 요청한다. 기본 대기열(5)이면 Windows에서 연결이 끊겨 import가 실패한다.
+    request_queue_size = 1024
+
+
 class DevHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
@@ -56,4 +61,4 @@ if __name__ == "__main__":
         raise SystemExit(1)
     handler = partial(DevHandler, directory=str(ROOT))
     print(f"http://127.0.0.1:{PORT}/")
-    ThreadingHTTPServer(("127.0.0.1", PORT), handler).serve_forever()
+    DevServer(("127.0.0.1", PORT), handler).serve_forever()
