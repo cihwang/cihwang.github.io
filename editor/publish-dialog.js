@@ -9,6 +9,8 @@ import { $, editHash, fetchLive, categoryPills } from './ui.js';
 
 const BUSY_TEXT = '올리는 중… 사이트에 보이기까지 보통 30초~1분 걸려요.';
 const NOT_YET_TEXT = '아직 반영 중이에요. 잠시 후 사이트에서 확인해 주세요.';
+const BUILD_HINT = '시간이 더 지나도 안 보이면 빌드가 실패했을 수 있어요.';
+const ACTIONS_URL = `https://github.com/${BLOG_REPO}/actions`;
 const PUBLISH_CONFLICT = '공개된 글이 그 사이 다른 곳에서 바뀌었거나, 같은 날짜·주소에 다른 글이 있어요. 덮어쓰지 않았어요. 목록에서 글을 다시 열어 확인해 주세요.';
 const ROLES = ['publish-form', 'publish-notes', 'publish-fields', 'publish-cats', 'publish-url', 'publish-msg',
   'publish-cancel', 'publish-confirm', 'publish-to-list', 'error-category', 'error-date', 'error-slug'];
@@ -153,12 +155,22 @@ export function createPublishDialog(ctx) {
     return { path: i === -1 ? null : paths[i], blogSha: files[i]?.sha ?? null, draftSha: draft?.sha ?? null };
   }
 
-  function showDone(sent, text, extra) {
+  /** 끝 안내: `text`, 글 링크, `extra`. `notYet`이면 빌드 실패일 수 있다며 GitHub Actions 링크(새 탭)를 덧붙인다. */
+  function showDone(sent, text, extra, notYet) {
     phase = 'done';
     const link = document.createElement('a');
     link.href = postUrl(sent.meta);
     link.textContent = shownUrl(sent.meta);
-    el['publish-msg'].replaceChildren(`${text} `, link, extra ? ` ${extra}` : '');
+    const hint = [];
+    if (notYet) {
+      const actions = document.createElement('a');
+      actions.href = ACTIONS_URL;
+      actions.target = '_blank';
+      actions.rel = 'noopener';
+      actions.textContent = 'GitHub Actions';
+      hint.push(` ${BUILD_HINT} `, actions, '에서 확인해 주세요.');
+    }
+    el['publish-msg'].replaceChildren(`${text} `, link, extra ? ` ${extra}` : '', ...hint);
     showActions(true);
     el['publish-to-list'].focus();
   }
@@ -181,7 +193,7 @@ export function createPublishDialog(ctx) {
       location.href = postUrl(sent.meta);
       return;
     }
-    showDone(sent, deployed ? '사이트에 올라갔어요.' : NOT_YET_TEXT, notCleared);
+    showDone(sent, deployed ? '사이트에 올라갔어요.' : NOT_YET_TEXT, notCleared, !deployed);
   }
 
   async function publishFailed(err, sent) {

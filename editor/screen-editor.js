@@ -56,6 +56,7 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
   let localPending = false; // 마지막 기기 저장 뒤 바뀐 것이 있다
   let localFailed = false;  // 마지막 기기 저장이 실패했다. 이때는 "이 기기에 남겨 뒀어요"라고 말하지 않는다.
   let finished = false;     // 출간·삭제·다른 기기 내용 불러오기로 이 글을 끝냈다. 더는 기기에 저장하지 않는다.
+  let loginLostShown = false; // 로그인 풀림 + 기기 저장 실패 안내를 이미 띄웠다(거듭 누를 때 같은 안내를 쌓지 않는다)
   let saving = false;
   let autosaveTimer = 0;
   let previewTimer = 0;
@@ -116,9 +117,27 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
     reload(text);
   }
 
+  /**
+   * 토큰이 풀렸을 때. 기기에 저장했으면 로그인 화면으로 간다. 기기 저장도 실패했으면 쓰던 내용이 이 화면에만 있으니
+   * 떠나지 않고 알린 뒤, 사용자가 복사하고 단추를 눌러야 로그인 화면으로 간다.
+   */
   function loseLoginSaved() {
-    saveLocal();
-    if (isCurrent()) loseLogin();
+    const saved = saveLocal();
+    if (!isCurrent()) return;
+    if (saved) return loseLogin();
+    setStatus('로그인이 풀렸어요. 이 기기에도 저장하지 못했어요.');
+    if (loginLostShown) return;
+    loginLostShown = true;
+    const p = document.createElement('p');
+    p.className = 'ed-notice';
+    p.append('로그인이 풀렸는데 이 기기에도 저장하지 못해서, 쓰던 내용은 지금 이 화면에만 있어요. 제목과 본문을 복사해 둔 뒤 다시 로그인해 주세요. ');
+    const relogin = document.createElement('button');
+    relogin.type = 'button';
+    relogin.className = 'ed-btn';
+    relogin.textContent = '복사했어요, 로그인하기';
+    relogin.addEventListener('click', () => { if (isCurrent()) loseLogin(); });
+    p.append(relogin);
+    $(root, 'notices').append(p);
   }
 
   function changed() {
@@ -179,11 +198,7 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
       const later = localFailed ? ' (그 뒤 고친 내용은 아직 어디에도 저장되지 않았어요)' : ' (그 뒤 고친 내용은 이 기기에만 있어요)';
       setStatus(`저장됨 · ${clockText(new Date())}${dirty() ? later : ''}`);
     } catch (e) {
-      if (e instanceof AuthError) {
-        saveLocal();
-        if (isCurrent()) loseLogin();
-        return;
-      }
+      if (e instanceof AuthError) return loseLoginSaved();
       conflict = isSaveConflict(e, sent);
       // 기기 저장도 실패했으면 충돌 안내의 "이 기기 내용은 남겨 뒀어요"는 거짓이 된다.
       let reason = failText(e);

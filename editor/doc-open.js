@@ -1,4 +1,5 @@
 // 쓰기 화면이 글을 열 때: 주소에 맞는 GitHub 내용과 기기 저장본을 받고, 둘이 다르면 어느 쪽으로 이어 쓸지 묻는다.
+import { isPostPath } from './post.js';
 import { local } from './ui.js';
 
 /** 머리말 키 순서와 상관없이 같은 내용이면 같은 문자열. GitHub에 올라간 내용과 비교하는 데 쓴다. */
@@ -17,7 +18,7 @@ function docFromSaved(saved) {
  * @returns {Promise<{ key: string, remote: object|null, saved: object|null, blank?: object }>}
  *   `key`는 기기 저장 키(draftPath, 없으면 blogPath, 새 글은 `new:<랜덤>`). `remote`는 GitHub 내용(새 글이면 null),
  *   `saved`는 기기 저장본(편집은 저장한 그대로, 새 글은 Doc 칸만), `blank`는 새 글의 빈 Doc.
- * @throws {Error} 편집 주소가 글 파일(.md)이 아니거나 GitHub에서 열지 못했을 때
+ * @throws {Error} 편집 주소가 글 파일(`posts/…md`, `..`·역슬래시 없음)이 아니거나 GitHub에서 열지 못했을 때
  */
 export async function loadDoc({ name, params, store }) {
   if (name === 'new') {
@@ -30,8 +31,8 @@ export async function loadDoc({ name, params, store }) {
   }
   const repo = params.get('repo') === 'blog' ? 'blog' : 'drafts';
   const path = params.get('path') ?? '';
-  // 빈 경로로 Contents API를 부르면 저장소 맨 위 폴더 목록이 와서 글처럼 열린다.
-  if (!path.endsWith('.md')) throw new Error(`글 파일 주소가 아니에요. (${path || '빈 주소'})`);
+  // 빈 경로로 Contents API를 부르면 저장소 맨 위 폴더 목록이 와서 글처럼 열린다. posts/ 밖의 파일도 글로 열지 않는다.
+  if (!isPostPath(path)) throw new Error(`글 파일 주소가 아니에요. (${path || '빈 주소'})`);
   const remote = await store.open({ repo, path });
   const key = remote.draftPath ?? remote.blogPath;
   return { key, remote, saved: local.load(key) };

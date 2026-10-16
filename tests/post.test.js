@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePost, serializePost, slugFromTitle, postPath, validateDraft, validatePublish, validateCategoryName, recategorize } from '../editor/post.js';
+import { parsePost, serializePost, slugFromTitle, postPath, validateDraft, validatePublish, validateCategoryName, recategorize, isPostPath } from '../editor/post.js';
 
 const text = '---\r\ntitle: Agentforce Coworker 소개\r\ncategory: 공부\r\ndate: 2026-10-13\r\ndraft: true\r\nextra: 1\r\n---\r\n## 가 😀\r\n';
 
@@ -36,4 +36,25 @@ test('카테고리 바꾸기는 머리말 한 줄만 고친다', () => {
   const crlf = '---\r\ntitle: t\r\ncategory: 공부\r\n---\r\n본문 category: 공부\r\n';
   assert.equal(recategorize(crlf, '공부', '배움'), '---\r\ntitle: t\r\ncategory: 배움\r\n---\r\n본문 category: 공부\r\n', '머리말 한 줄만, 줄바꿈·본문 그대로');
   assert.equal(recategorize(crlf, '글', '배움'), null, '다른 카테고리 글은 건드리지 않는다');
+});
+
+test('카테고리 이름 검사: 따옴표는 쓸 수 없다(카테고리 바꾸기 뒤 머리말에서 벗겨져 빌드가 깨진다)', () => {
+  for (const bad of ['"인용"', "작은'따옴표", '가"나']) assert.ok(validateCategoryName(bad, ['글']).length > 0, `거부해야 함: ${bad}`);
+});
+
+test('공개 검사: 공개된 글의 카테고리를 바꾸면 막지 않고 경고', () => {
+  const live = [{ path: 'posts/x.md', cat: '공부', slug: 'a' }];
+  const { errors, warnings } = validatePublish({ title: 't', category: '글', date: '2026-10-16', slug: 'a' }, '', { categories: ['공부', '글'], livePosts: live, ownPath: 'posts/x.md' });
+  assert.deepEqual(errors, [], '카테고리 변경은 오류가 아니다');
+  assert.ok(warnings.some((w) => w.includes('카테고리')), '기존 링크가 끊긴다고 경고한다');
+  const same = validatePublish({ title: 't', category: '공부', date: '2026-10-16', slug: 'a' }, '', { categories: ['공부'], livePosts: live, ownPath: 'posts/x.md' });
+  assert.deepEqual(same.warnings, [], '카테고리·slug가 그대로면 경고 없음');
+  const fresh = validatePublish({ title: 't', category: '글', date: '2026-10-16', slug: 'b' }, '', { categories: ['글'], livePosts: live, ownPath: null });
+  assert.deepEqual(fresh.warnings, [], '새 글은 끊길 링크가 없다');
+});
+
+test('편집 주소의 글 경로 검사', () => {
+  for (const ok of ['posts/2026-10-16-a.md', 'posts/예시/글-01.md']) assert.equal(isPostPath(ok), true, `받아야 함: ${ok}`);
+  for (const bad of ['', 'posts/', 'site.json', 'posts/a.txt', 'media/a.md', 'posts/../site.md', 'posts/a/../../b.md', 'posts\\a.md', 'posts/a\\..\\b.md', '/posts/a.md', 'posts/..'])
+    assert.equal(isPostPath(bad), false, `거부해야 함: ${bad}`);
 });

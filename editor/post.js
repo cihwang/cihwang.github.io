@@ -7,7 +7,8 @@ import { countEmptyAlt } from './media.js';
 const KEY_ORDER = ['title', 'category', 'date', 'slug', 'draft'];
 const DATE_FORMAT = /^\d{4}-\d{2}-\d{2}$/;
 const CATEGORY_MAX_LENGTH = 20;
-const CATEGORY_FORBIDDEN = /[/#?%]/;
+// 따옴표는 카테고리 바꾸기(recategorize) 뒤 머리말을 읽을 때 벗겨져 이름이 달라지고 build.js가 실패한다.
+const CATEGORY_FORBIDDEN = /[/#?%"']/;
 
 /**
  * 글 파일 텍스트를 머리말과 본문으로 나눈다.
@@ -64,6 +65,15 @@ export function postPath(date, slug) {
 }
 
 /**
+ * 편집 주소(`#/edit?path=`)로 열어도 되는 글 경로인지 본다. 주소는 누구나 만들 수 있어 저장소의 다른 파일을 글로 열지 않게 한다.
+ * @param {string} path 저장소 안 경로
+ * @returns {boolean} `posts/`로 시작하고 `.md`로 끝나며 `..` 조각과 역슬래시가 없으면 true
+ */
+export function isPostPath(path) {
+  return path.startsWith('posts/') && path.endsWith('.md') && !path.includes('\\') && !path.split('/').includes('..');
+}
+
+/**
  * 초안 저장 전 검사: 제목이 있고 카테고리가 목록에 있어야 한다.
  * @param {Record<string,string>} meta 글 머리말
  * @param {string[]} categories 허용하는 카테고리 이름들
@@ -97,6 +107,8 @@ export function validatePublish(meta, body, { categories, livePosts, ownPath }) 
   if (emptyAlt > 0) warnings.push(`설명이 빈 그림이 ${emptyAlt}개 있어요`);
   const own = ownPath && livePosts.find((p) => p.path === ownPath);
   if (own && own.slug !== meta.slug) warnings.push('공개된 글의 주소(slug)를 바꾸면 기존 링크가 끊겨요');
+  // 사이트 글 주소가 #/카테고리/slug라 카테고리를 바꿔도 옛 링크가 끊긴다.
+  if (own && own.cat !== meta.category) warnings.push('공개된 글의 카테고리를 바꾸면 기존 링크가 끊겨요');
   return { errors, warnings };
 }
 
@@ -110,7 +122,7 @@ export function validateCategoryName(name, existing) {
   const trimmed = name.trim();
   const errors = [];
   if (trimmed.length < 1 || trimmed.length > CATEGORY_MAX_LENGTH) errors.push(`이름은 1~${CATEGORY_MAX_LENGTH}자로 적어 주세요`);
-  if (CATEGORY_FORBIDDEN.test(trimmed)) errors.push('이름에 / # ? % 는 쓸 수 없어요');
+  if (CATEGORY_FORBIDDEN.test(trimmed)) errors.push('이름에 / # ? % " \' 는 쓸 수 없어요');
   if (trimmed.startsWith('_')) errors.push('이름은 _ 로 시작할 수 없어요');
   if (existing.includes(trimmed)) errors.push('이미 있는 카테고리예요');
   return errors;

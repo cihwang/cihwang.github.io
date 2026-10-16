@@ -1,6 +1,6 @@
 /* 글쓰기 화면(write.html). 색·글꼴은 styles.css 토큰을 그대로 쓰고, 미리보기는 사이트의 .post-title·.post-body 규칙을 그대로 받는다.
    넓이 768px 이상은 쓰기·미리보기 두 칸, 미만은 탭 하나씩. 폰에서 서식 줄과 아래 막대는 화면 키보드 위에 붙는다
-   (--kb-offset: 키보드가 가린 높이, --bar-h: 아래 막대 높이 — 둘 다 app.js가 넣는다). */
+   (--kb-offset: 키보드가 가린 높이, --bar-h: 아래 막대 높이 — 둘 다 screen-editor.js가 넣는다). */
 
 .editor-page { min-height: 100vh; min-height: 100dvh; }
 .editor-page [hidden] { display: none !important; }
