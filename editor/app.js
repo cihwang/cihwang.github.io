@@ -165,8 +165,9 @@ function route(notice = null) {
   const id = screenId;
   const ctx = { session, isCurrent: () => id === screenId, ask, loseLogin };
   const { name, params } = parseHash();
+  // reload: 출간·충돌 뒤 쓰기 화면이 GitHub에서 글을 다시 열 때, 지금 주소를 안내와 함께 다시 그린다.
   teardown = name === 'new' || name === 'edit'
-    ? showEditor({ ...ctx, name, params })
+    ? showEditor({ ...ctx, name, params, notice, reload: route })
     : showList({ ...ctx, logout, notice });
 }
 

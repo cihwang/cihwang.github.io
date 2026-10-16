@@ -148,6 +148,8 @@
         <button type="button" data-action="photo" aria-label="사진">사진</button>
         <button type="button" data-format="code" aria-label="코드">코드</button>
       </div>
+      <!-- 사진 단추가 여는 파일 고르기. 폰에서는 사진첩·카메라가 뜬다. -->
+      <input type="file" accept="image/*,video/mp4,video/webm" multiple hidden data-role="photo-input">
       <textarea class="ed-body" data-role="body" placeholder="이야기를 적어 보세요…" aria-label="본문" spellcheck="false"></textarea>
     </section>
     <section class="ed-preview" id="pane-preview" role="tabpanel" aria-labelledby="tab-preview">
@@ -157,9 +159,60 @@
     <footer class="ed-bar" data-role="bar">
       <button type="button" class="ed-btn is-quiet" data-role="exit">← 나가기</button>
       <p class="ed-save-status" data-role="status" role="status"></p>
+      <button type="button" class="ed-btn is-quiet ed-icon-btn" data-role="help" aria-label="글쓰기 도움말" aria-haspopup="dialog">?</button>
+      <details class="ed-menu" data-role="menu">
+        <summary class="ed-btn is-quiet ed-icon-btn" aria-label="더 보기">⋯</summary>
+        <div class="ed-menu-list">
+          <button type="button" class="ed-btn is-quiet" data-role="delete">삭제</button>
+        </div>
+      </details>
       <button type="button" class="ed-btn" data-role="save">임시저장</button>
-      <button type="button" class="ed-btn is-primary" data-role="publish">출간하기</button>
+      <button type="button" class="ed-btn is-primary" data-role="publish" aria-haspopup="dialog">출간하기</button>
     </footer>
+
+    <!-- 출간 설정 창. 오류는 칸 바로 아래, 칸이 없는 오류와 경고는 맨 위에 보인다. -->
+    <dialog class="ed-dialog" data-role="publish-dialog" aria-labelledby="publish-title">
+      <form class="ed-form" data-role="publish-form" novalidate>
+        <h2 id="publish-title" class="ed-dialog-title">출간 설정</h2>
+        <div class="ed-notices" data-role="publish-notes" role="status"></div>
+        <fieldset class="ed-plain ed-form" data-role="publish-fields">
+          <fieldset class="ed-plain ed-field" aria-describedby="publish-cat-error">
+            <legend>카테고리</legend>
+            <div class="ed-cats-list" data-role="publish-cats"></div>
+            <p class="ed-field-error" id="publish-cat-error" data-role="error-category"></p>
+          </fieldset>
+          <div class="ed-field">
+            <label for="publish-date">날짜</label>
+            <input type="date" id="publish-date" name="date" required aria-describedby="publish-date-error">
+            <p class="ed-field-error" id="publish-date-error" data-role="error-date"></p>
+          </div>
+          <div class="ed-field">
+            <label for="publish-slug">주소(slug)</label>
+            <input type="text" id="publish-slug" name="slug" autocomplete="off" autocapitalize="off" spellcheck="false" required aria-describedby="publish-url publish-slug-error">
+            <p class="ed-url" id="publish-url" data-role="publish-url"></p>
+            <p class="ed-field-error" id="publish-slug-error" data-role="error-slug"></p>
+          </div>
+        </fieldset>
+        <p class="ed-form-msg" data-role="publish-msg" role="status" tabindex="-1"></p>
+        <div class="ed-ask-actions">
+          <button type="button" class="ed-btn" data-role="publish-cancel">취소</button>
+          <button type="submit" class="ed-btn is-primary" data-role="publish-confirm">출간하기</button>
+          <button type="button" class="ed-btn is-primary" data-role="publish-to-list" hidden>목록으로</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- 도움말 창. 모양은 사이트 도움말(styles.css dialog.help)을 그대로 쓴다. -->
+    <dialog class="help" data-role="help-dialog" aria-labelledby="help-title">
+      <div class="help-head">
+        <h2 id="help-title" class="help-title" data-role="help-title">글쓰기 도움말</h2>
+        <button type="button" class="help-close" data-role="help-close">닫기</button>
+      </div>
+      <div class="help-body">
+        <p class="ed-form-msg" data-role="help-msg" role="status"></p>
+        <div class="post-body" data-role="help-body"></div>
+      </div>
+    </dialog>
   </div>
 </template>
 </body>

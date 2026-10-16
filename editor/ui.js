@@ -6,7 +6,8 @@ import { SITE_URL } from './config.js';
 import { ConflictError } from './github.js';
 import { createLocal } from './local.js';
 
-const CONFLICT_TEXT = '다른 기기에서 먼저 저장했어요. 덮어쓰지 않았고, 이 기기 내용은 그대로 남겨 뒀어요.';
+/** 임시저장이 다른 기기 저장과 부딪혔을 때 상태 글. */
+export const CONFLICT_TEXT = '다른 기기에서 먼저 저장했어요. 덮어쓰지 않았고, 이 기기 내용은 그대로 남겨 뒀어요.';
 const app = document.querySelector('[data-role="app"]');
 
 /** 쓰던 글의 기기 안 저장본. 상태가 없는 localStorage 감싸개라 화면들이 하나를 같이 쓴다. */
