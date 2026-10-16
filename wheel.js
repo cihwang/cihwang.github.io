@@ -42,6 +42,7 @@
   const DIM_RED = 0.4;             // 다른 단계 항목·사이 눈금이 가운데 올 때 '지금 여기' 색의 세기
   const PINCH_STEP = 40;           // 핀치 누적량이 이만큼 넘으면 한 단계 들어가거나 나온다
   const BLUR_MAX = 8;              // 아래로 읽어 내려갈 때 휠이 흐려지는 최대치(px)
+  const SCROLL_HANDOFF_MS = 400;   // 페이지가 스크롤된 뒤 이만큼은 휠 입력을 다이얼이 가로채지 않는다(맨 위에 닿은 뒤 남은 관성)
   const OVERVIEW_R = 0.32;         // 전체 원의 반지름 = 화면 짧은 변 × 이 값
   // 돌리는 손맛: 도는 속도만큼 가운데 근처 눈금이 부풀었다가, 멈추면 살짝 되튀며 가라앉는다. 멈춰 있을 땐 모양 그대로.
   const DIAL_ZOOM = 0.12;          // 가장 빠를 때 다이얼 전체가 커지는 비율(멈출 때는 되튀며 살짝 작아졌다 돌아온다)
@@ -212,6 +213,7 @@
     arm: null,            // 섬세하게 멈춘 다른 단계 항목 { slot, start }. 차오르면 그 항목으로 간다
     armP: 0,              // 차오른 정도(0~1)
     wheelLog: [],         // 트랙패드 입력 기록 { t, px } — 섬세함 판정용
+    pageScrollT: -Infinity, // 페이지가 마지막으로 스크롤된 시각(ms)
     swapTimer: null,
     historyLock: null,    // 뒤로/앞으로 가기로 움직이는 중인 항목. 도착해도 기록을 다시 쓰지 않는다
     pendingOut: null      // 화면에서 '나가기'를 눌러 history.back()을 부른 뒤 도착할 항목
@@ -897,6 +899,9 @@
 
   // ── 입력: 휠·트랙패드·핀치 ───────────────────────────────
   wheel.addEventListener('wheel', (e) => {
+    // 글을 내려 읽는 중(휠이 흐려져 뒤로 물러난 상태)이거나 방금까지 페이지가 스크롤됐으면,
+    // 뒤에 깔린 휠이 입력을 가로채 다른 글로 넘어가지 않게 페이지에 맡긴다. 핀치(ctrl)는 그대로 휠의 것.
+    if (!e.ctrlKey && (window.scrollY > 0 || performance.now() - s.pageScrollT < SCROLL_HANDOFF_MS)) return;
     e.preventDefault(); // 휠 위에서는 페이지 대신 휠이 움직인다
     dropHistoryLock();
     if (e.ctrlKey) {
@@ -1017,7 +1022,7 @@
     clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Seoul' });
   }
 
-  window.addEventListener('scroll', applyScrollBlur, { passive: true });
+  window.addEventListener('scroll', () => { s.pageScrollT = performance.now(); applyScrollBlur(); }, { passive: true });
   window.addEventListener('resize', render);
 
   fillRows(recentEl, recent.slice(0, 5));
