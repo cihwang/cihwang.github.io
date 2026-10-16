@@ -452,6 +452,7 @@
     const blur = Math.min(BLUR_MAX, y / 30);
     wheel.style.filter = blur > 0.1 ? 'blur(' + blur.toFixed(2) + 'px)' : '';
     wheel.style.opacity = y > 0 ? String(1 - Math.min(0.6, y / 600)) : '';
+    wheel.classList.toggle('is-behind', y > 0);
   }
 
   function measureLabels() {
@@ -899,9 +900,9 @@
 
   // ── 입력: 휠·트랙패드·핀치 ───────────────────────────────
   wheel.addEventListener('wheel', (e) => {
-    // 글을 내려 읽는 중(휠이 흐려져 뒤로 물러난 상태)이거나 방금까지 페이지가 스크롤됐으면,
-    // 뒤에 깔린 휠이 입력을 가로채 다른 글로 넘어가지 않게 페이지에 맡긴다. 핀치(ctrl)는 그대로 휠의 것.
-    if (!e.ctrlKey && (window.scrollY > 0 || performance.now() - s.pageScrollT < SCROLL_HANDOFF_MS)) return;
+    // 내려 읽는 동안은 .is-behind라 휠까지 입력이 오지 않는다. 남는 건 맨 위에 닿은 직후의 관성:
+    // 방금까지 페이지가 스크롤됐으면 다이얼이 이어받아 다른 글로 넘어가지 않게 버린다. 핀치(ctrl)는 그대로 휠의 것.
+    if (!e.ctrlKey && performance.now() - s.pageScrollT < SCROLL_HANDOFF_MS) return;
     e.preventDefault(); // 휠 위에서는 페이지 대신 휠이 움직인다
     dropHistoryLock();
     if (e.ctrlKey) {
