@@ -41,7 +41,8 @@
   const ARM_MS = 900;
   const DIM_RED = 0.4;             // 다른 단계 항목·사이 눈금이 가운데 올 때 '지금 여기' 색의 세기
   const PINCH_STEP = 40;           // 핀치 누적량이 이만큼 넘으면 한 단계 들어가거나 나온다
-  const BLUR_MAX = 8;              // 아래로 읽어 내려갈 때 휠이 흐려지는 최대치(px)
+  const BLUR_MAX = 8;              // 아래로 읽어 내려갈 때 휠이 사라지며 흐려지는 최대치(px)
+  const SCROLL_FADE_PX = 80;       // 이만큼 내려가면 휠이 완전히 사라진다
   const SCROLL_HANDOFF_MS = 400;   // 페이지가 스크롤된 뒤 이만큼은 휠 입력을 다이얼이 가로채지 않는다(맨 위에 닿은 뒤 남은 관성)
   const OVERVIEW_R = 0.32;         // 전체 원의 반지름 = 화면 짧은 변 × 이 값
   // 돌리는 손맛: 도는 속도만큼 가운데 근처 눈금이 부풀었다가, 멈추면 살짝 되튀며 가라앉는다. 멈춰 있을 땐 모양 그대로.
@@ -449,9 +450,11 @@
 
   function applyScrollBlur() {
     const y = window.scrollY;
-    const blur = Math.min(BLUR_MAX, y / 30);
-    wheel.style.filter = blur > 0.1 ? 'blur(' + blur.toFixed(2) + 'px)' : '';
-    wheel.style.opacity = y > 0 ? String(1 - Math.min(0.6, y / 600)) : '';
+    // 내려 읽기 시작하면 휠은 흐려지며 SCROLL_FADE_PX 안에 완전히 사라진다(글 뒤에 남아 읽기를 방해하지 않게).
+    const t = Math.min(1, y / SCROLL_FADE_PX);
+    wheel.style.filter = t > 0 ? 'blur(' + (t * BLUR_MAX).toFixed(2) + 'px)' : '';
+    wheel.style.opacity = t > 0 ? String(1 - t) : '';
+    wheel.style.visibility = t >= 1 ? 'hidden' : '';
     wheel.classList.toggle('is-behind', y > 0);
   }
 
