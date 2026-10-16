@@ -86,6 +86,7 @@
     <header class="ed-page-head">
       <h1 id="list-title" class="ed-h1">임시글</h1>
       <nav class="ed-page-nav" aria-label="에디터 메뉴" data-role="list-nav">
+        <a class="ed-btn is-quiet" href="#/categories">카테고리 관리</a>
         <button type="button" class="ed-btn is-quiet" data-role="logout">로그아웃</button>
       </nav>
     </header>
@@ -111,6 +112,41 @@
       <button type="button" class="ed-btn is-quiet" data-role="delete">삭제</button>
     </div>
   </li>
+</template>
+
+<template data-tpl="categories">
+  <section class="ed-page" aria-labelledby="cats-title">
+    <header class="ed-page-head">
+      <h1 id="cats-title" class="ed-h1">카테고리 관리</h1>
+      <a class="ed-btn is-quiet" href="#/">임시글로</a>
+    </header>
+    <div class="ed-notices" data-role="notices" role="alert"></div>
+    <p class="ed-form-msg" data-role="status" role="status">불러오는 중…</p>
+    <ul class="ed-drafts" data-role="cat-list" aria-label="카테고리 목록 (사이트 휠 순서)"></ul>
+    <form class="ed-form" data-role="add-form" novalidate>
+      <label class="ed-field">
+        <span>새 카테고리</span>
+        <input type="text" data-role="add-name" autocomplete="off" spellcheck="false" aria-describedby="add-error">
+      </label>
+      <p class="ed-field-error" id="add-error" data-role="add-error"></p>
+      <button type="submit" class="ed-btn is-primary" data-role="add-submit" disabled>만들기</button>
+    </form>
+    <dialog class="ed-ask" data-role="rename-dialog" aria-labelledby="rename-title">
+      <form class="ed-form" data-role="rename-form" novalidate>
+        <p id="rename-title" data-role="rename-title"></p>
+        <label class="ed-field">
+          <span>새 이름</span>
+          <input type="text" data-role="rename-name" autocomplete="off" spellcheck="false" aria-describedby="rename-error">
+        </label>
+        <p class="ed-field-error" id="rename-error" data-role="rename-error"></p>
+        <p class="ed-rename-info" data-role="rename-info"></p>
+        <div class="ed-ask-actions">
+          <button type="button" class="ed-btn" data-role="rename-cancel">취소</button>
+          <button type="submit" class="ed-btn is-primary" data-role="rename-submit" disabled>이름 바꾸기</button>
+        </div>
+      </form>
+    </dialog>
+  </section>
 </template>
 
 <template data-tpl="load-error">

@@ -9,6 +9,7 @@ import { createStore } from './store.js';
 import { $, mount, addNotice } from './ui.js';
 import { showList } from './screen-list.js';
 import { showEditor } from './screen-editor.js';
+import { showCategories } from './screen-categories.js';
 
 const REPO_NAME = /^[\w.-]+\/[\w.-]+$/;
 const LOGIN_LOST = '로그인이 풀렸어요. 다시 로그인하면 쓰던 글로 돌아가요.';
@@ -140,10 +141,13 @@ function logout() {
   route(note);
 }
 
-/** 토큰이 풀렸을 때: 지금 주소는 그대로 두고 로그인 화면으로. 다시 로그인하면 `route()`가 같은 글을 연다. */
-function loseLogin() {
+/**
+ * 토큰이 풀렸을 때: 지금 주소는 그대로 두고 로그인 화면으로. 다시 로그인하면 `route()`가 같은 글을 연다.
+ * @param {string} [before] 로그인 안내 앞에 먼저 보여 줄 말(이미 일어난 부분 실패 같은 것)
+ */
+function loseLogin(before) {
   session = null;
-  route(LOGIN_LOST);
+  route(before ? `${before} ${LOGIN_LOST}` : LOGIN_LOST);
 }
 
 // ── 주소 ────────────────────────────────────────────────
@@ -166,6 +170,10 @@ function route(notice = null) {
   const ctx = { session, isCurrent: () => id === screenId, ask, loseLogin };
   const { name, params } = parseHash();
   // reload: 출간·충돌 뒤 쓰기 화면이 GitHub에서 글을 다시 열 때, 지금 주소를 안내와 함께 다시 그린다.
+  if (name === 'categories') {
+    teardown = showCategories({ ...ctx, notice });
+    return;
+  }
   teardown = name === 'new' || name === 'edit'
     ? showEditor({ ...ctx, name, params, notice, reload: route })
     : showList({ ...ctx, logout, notice });

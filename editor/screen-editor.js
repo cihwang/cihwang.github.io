@@ -226,7 +226,12 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
   }
 
   function renderCats(categories) {
-    el.cats.replaceChildren(...categoryPills('category', categories, doc.meta.category));
+    const add = document.createElement('a');
+    add.className = 'ed-pill-add';
+    add.href = '#/categories';
+    add.textContent = '+';
+    add.setAttribute('aria-label', '카테고리 관리');
+    el.cats.replaceChildren(...categoryPills('category', categories, doc.meta.category), add);
   }
 
   function wire() {

@@ -323,3 +323,21 @@
   .ed-save-status:empty { display: none; }
   .ed-bar [data-role="exit"] { margin-right: auto; }
 }
+
+/* ── 카테고리 관리 ─────────────────────────────────────── */
+
+.ed-pill-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 34px;
+  border: 1px dashed var(--tick-soft);
+  border-radius: 999px;
+  font-size: 16px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.ed-pill-add:hover { color: var(--ink); border-color: var(--ink-hover); }
+.ed-rename-info { margin: 0; font-size: 14px; line-height: 1.7; }
+.ed-rename-info code { font-family: var(--mono); font-size: 13px; }
