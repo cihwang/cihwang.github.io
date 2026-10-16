@@ -13,8 +13,6 @@
   /* '지금 여기' 잎색. 검은 눈금과 밝기가 달라야 가는 선에서도 구분된다(눈금 대비 4.7, 바탕 대비 3.2). */
   --accent: #1F9D55;
   --code-bg: #E9EBE5;  /* 코드 상자 바탕: 바탕보다 한 톤 아래 */
-  /* 영문 이탤릭(Newsreader)을 앞에, 한글 명조(마루 부리)를 뒤에: 영어는 진짜 이탤릭, 한글은 마루 부리로 나온다. */
-  --serif: 'Newsreader', 'MaruBuri', Georgia, serif;
   --sans: 'Pretendard Variable', Pretendard, system-ui, sans-serif;
   --mono: 'D2Coding', monospace;
   --wheel-h: 290px;   /* 휠이 차지하는 위쪽 높이. wheel.js ARC_TOP과 함께 움직인다 */
@@ -110,9 +108,7 @@ a:hover { color: var(--ink-hover); }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--serif);
-  font-style: italic;
-  font-synthesis: none; /* 한글엔 이탤릭이 없다. 브라우저가 억지로 기울이지 않게 */
+  font-weight: 600;
   font-size: 13px;
   line-height: 1.3;
 }
@@ -310,10 +306,7 @@ a:hover { color: var(--ink-hover); }
 .post-meta { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
 .post-title {
   margin: 0 0 28px;
-  font-family: var(--serif);
-  font-style: italic;
-  font-synthesis: none;
-  font-weight: 400;
+  font-weight: 600;
   font-size: 26px;
   line-height: 1.35;
 }
@@ -322,9 +315,9 @@ a:hover { color: var(--ink-hover); }
 
 /* ── 본문 마크다운 (build.js가 posts/*.md에서 만든 HTML) ─────────────
    색은 늘 무채색: 화면의 유일한 색(잎색)은 '지금 여기'와 체크박스에만. */
-/* 읽는 글은 제목과 같은 마루 부리로 한 결로 읽힌다. 명조는 같은 크기에서 작아 보여 고딕보다 1px 키운다.
+/* 읽는 글도 화면 전체와 같은 Pretendard(body에서 물려받음).
    코드는 D2Coding, 표 머리·각주처럼 작은 정보는 아래 규칙에서 따로 정한다. */
-.post-body { font-family: 'MaruBuri', Georgia, serif; font-size: 17px; line-height: 1.9; overflow-wrap: anywhere; }
+.post-body { font-size: 16px; line-height: 1.9; overflow-wrap: anywhere; }
 .post-body > :first-child { margin-top: 0; }
 .post-body h2, .post-body h3, .post-body h4 {
   /* 제목 앵커로 이동했을 때 위쪽 고정 휠에 가리지 않게 */
@@ -486,10 +479,7 @@ dialog.help::backdrop { background: rgba(20, 22, 19, 0.35); backdrop-filter: blu
 }
 .help-title {
   margin: 0;
-  font-family: var(--serif);
-  font-style: italic;
-  font-synthesis: none;
-  font-weight: 400;
+  font-weight: 600;
   font-size: 20px;
 }
 .help-close {
