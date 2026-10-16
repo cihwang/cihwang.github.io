@@ -139,6 +139,9 @@
   const page = $('[data-role="page"]');
   const views = { home: $('[data-view="home"]'), cat: $('[data-view="cat"]'), post: $('[data-view="post"]') };
   const recentEl = $('[data-role="recent"]');
+  const popularEl = $('[data-role="popular"]');
+  const visitsTodayEl = $('[data-role="visits-today"]');
+  const visitsTotalEl = $('[data-role="visits-total"]');
   const catTitle = $('[data-role="cat-title"]');
   const catRows = $('[data-role="cat-rows"]');
   const postMeta = $('[data-role="post-meta"]');
@@ -648,6 +651,7 @@
     updateHub();
     syncHistory(slot);
     document.title = kind === 'home' ? baseTitle : (kind === 'cat' ? slots[slot].cat : slots[slot].post.title) + ' — ' + data.site;
+    countView(slot);
     const show = () => {
       const view = kind === 'post' ? 'post' : kind === 'cat' ? 'cat' : 'home';
       if (view === 'cat') fillCat(slots[slot].cat);
@@ -759,10 +763,10 @@
   }
 
   // 글이 하나도 없을 때(첫 배포, 빈 카테고리) 목록 자리에 남기는 한 줄.
-  function emptyRow() {
+  function emptyRow(text) {
     const li = document.createElement('li');
     li.className = 'rows-empty';
-    li.textContent = '아직 글이 없어요';
+    li.textContent = text || '아직 글이 없어요';
     return li;
   }
 
@@ -922,6 +926,62 @@
 
   hub.addEventListener('click', () => goOut());
 
+  // ── 방문 집계(GoatCounter) ────────────────────────────────
+  // 세는 쪽은 index.html의 count.js, 읽는 쪽은 공개 카운터(사이트 설정 'Allow adding visitor counts'가 켜져 있어야 한다).
+  // 카운터 응답은 GoatCounter가 최대 4시간 캐시한다: 방금 들어온 방문은 늦게 보인다.
+  const GC_SITE = 'https://cihwang6870.goatcounter.com';
+
+  // 집계 경로는 주소에서 #만 뺀 꼴(사람이 읽는 한글 그대로): / · /공부 · /공부/휠을-만들며
+  function statPathFor(slot) {
+    const x = slots[slot];
+    if (x.kind === 'home') return '/';
+    return '/' + x.cat + (x.kind === 'post' ? '/' + x.post.slug : '');
+  }
+
+  // 주소가 #/… 라 count.js가 저절로 세면 모든 조회가 '/' 하나로 쌓인다. 화면이 바뀔 때마다 직접 센다.
+  function countView(slot) {
+    const send = () => window.goatcounter.count({ path: statPathFor(slot), title: document.title });
+    if (window.goatcounter && window.goatcounter.count) { send(); return; }
+    // count.js가 아직 오는 중이면 도착하면 센다. 광고 차단 등으로 못 오면 세지 않는다(화면에는 영향 없음).
+    const script = document.querySelector('script[data-goatcounter]');
+    if (script) script.addEventListener('load', send, { once: true });
+  }
+
+  // 공개 카운터 하나. 한 번도 열리지 않은 경로는 404 → 0. count는 '1,234'처럼 쉼표가 든 문자열로 온다.
+  async function fetchStat(path, startDate) {
+    const url = GC_SITE + '/counter/' + encodeURIComponent(path) + '.json' + (startDate ? '?start=' + startDate : '');
+    const res = await fetch(url);
+    if (res.status === 404) return 0;
+    if (!res.ok) throw new Error('GoatCounter ' + path + ' ' + res.status);
+    return Number(String((await res.json()).count).replace(/\D/g, ''));
+  }
+
+  async function loadVisitStats() {
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }); // YYYY-MM-DD(서울)
+    try {
+      const both = await Promise.all([fetchStat('TOTAL', today), fetchStat('TOTAL')]);
+      visitsTodayEl.textContent = both[0].toLocaleString('ko-KR');
+      visitsTotalEl.textContent = both[1].toLocaleString('ko-KR');
+    } catch (err) {
+      console.warn('[blog] 방문자 수를 불러오지 못했어요', err);
+    }
+    // ponytail: 글마다 카운터를 한 번씩 부른다(글 수만큼 요청). 글이 수백 편이 되면 빌드 때 GoatCounter API로 한 번에 받아 posts.json에 넣는다.
+    try {
+      const counts = await Promise.all(postSlots.map((i) => fetchStat(statPathFor(i))));
+      const top = postSlots.map((slot, k) => ({ slot: slot, n: counts[k] })).filter((p) => p.n > 0).sort((a, b) => b.n - a.n).slice(0, 3);
+      if (!top.length) { popularEl.replaceChildren(emptyRow('아직 집계된 글이 없어요')); return; }
+      popularEl.replaceChildren.apply(popularEl, top.map((p, rank) => {
+        const li = rowFor(p.slot);
+        li.querySelector('.row-date').textContent = String(rank + 1).padStart(2, '0');
+        li.querySelector('.row-cat').textContent = p.n.toLocaleString('ko-KR') + '회';
+        return li;
+      }));
+    } catch (err) {
+      console.warn('[blog] 많이 읽힌 글을 불러오지 못했어요', err);
+      popularEl.replaceChildren(emptyRow('조회수를 불러오지 못했어요'));
+    }
+  }
+
   // ── 기타 ─────────────────────────────────────────────
   function tickClock() {
     clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Seoul' });
@@ -931,6 +991,7 @@
   window.addEventListener('resize', render);
 
   fillRows(recentEl, recent.slice(0, 5));
+  loadVisitStats();
   measureLabels();
   // 주소로 바로 들어와도(새로고침·공유 링크) 그 자리에서 시작한다.
   const start = slotFromHash();
@@ -942,6 +1003,7 @@
     setCurrent(start, true);
   } else {
     updateHub();
+    countView(HOME);
   }
   render();
   tickClock();

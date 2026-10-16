@@ -78,14 +78,10 @@
         <ol class="rows" data-role="recent"></ol>
       </section>
       <div class="home-side">
-        <!-- 많이 읽힌 글: 조회수 집계(GoatCounter)를 붙이면 채운다. 지금은 자리만. -->
+        <!-- 많이 읽힌 글: GoatCounter 글별 조회수로 wheel.js가 채운다. -->
         <section aria-labelledby="popular-title">
           <h2 id="popular-title" class="section-title">많이 읽힌 글</h2>
-          <ol class="rows">
-            <li><span class="row is-static"><span class="row-date">01</span><span class="row-title">[많이 읽힌 글]</span><span class="row-cat">[조회수]</span></span></li>
-            <li><span class="row is-static"><span class="row-date">02</span><span class="row-title">[많이 읽힌 글]</span><span class="row-cat">[조회수]</span></span></li>
-            <li><span class="row is-static"><span class="row-date">03</span><span class="row-title">[많이 읽힌 글]</span><span class="row-cat">[조회수]</span></span></li>
-          </ol>
+          <ol class="rows" data-role="popular"></ol>
         </section>
         <section aria-labelledby="now-title">
           <h2 id="now-title" class="section-title">지금</h2>
@@ -96,8 +92,8 @@
     <footer class="foot">
       <span class="foot-links"><a href="#">GitHub</a><a href="#">메일</a><a href="#">RSS</a></span>
       <span class="foot-info">
-        <!-- 방문자 수: 조회수 집계를 붙이면 채운다. -->
-        <span>방문 오늘 [n] · 전체 [n]</span>
+        <!-- 방문자 수: GoatCounter에서 wheel.js가 채운다. 못 불러오면 – 로 남는다. -->
+        <span>방문 오늘 <span data-role="visits-today">–</span> · 전체 <span data-role="visits-total">–</span></span>
         <span>서울 <time data-role="clock"></time></span>
       </span>
     </footer>
@@ -121,6 +117,11 @@
 
 <p class="sr-only" aria-live="polite" data-role="announce"></p>
 
+<!-- 방문 집계(GoatCounter, 쿠키 없음). 주소가 #/… 라 첫 화면에서 저절로 세지 않고(no_onload) 화면이 바뀔 때마다 wheel.js가 센다.
+     localhost 미리보기는 count.js가 세지 않는다. 버전은 v5로 고정(integrity는 goatcounter.com/help/countjs-versions). -->
+<script data-goatcounter="https://cihwang6870.goatcounter.com/count" data-goatcounter-settings='{"no_onload": true}'
+        async src="https://gc.zgo.at/count.v5.js" crossorigin="anonymous"
+        integrity="sha384-atnOLvQb9t+jTSipvd75X2yginT4PjVbqDdlJAmxMm+wYElFmeR6EmLP5bYeoRVQ"></script>
 <script src="sky.js"></script>
 <script src="help.js"></script>
 <script src="wheel.js"></script>
