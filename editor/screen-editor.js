@@ -277,7 +277,7 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
     listen(el.help, 'click', helpDialog.open);
     listen(el.delete, 'click', () => {
       el.menu.open = false;
-      deleteOpenDoc({ ask, getDoc: () => doc, store, saveLocal, stopLocal, dropLocal, goTo, setStatus, loseLogin: loseLoginSaved, isCurrent });
+      deleteOpenDoc({ ask, getDoc: () => doc, key: () => key, store, saveLocal, stopLocal, dropLocal, goTo, setStatus, loseLogin: loseLoginSaved, isCurrent });
     });
     // 펼친 메뉴는 바깥을 누르거나 Esc로 닫는다(details는 저절로 닫히지 않는다).
     listen(document, 'click', (e) => {

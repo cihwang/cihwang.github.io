@@ -1,7 +1,11 @@
 <!doctype html>
 <html lang="ko">
 <head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-NABkmstXMTeSEUMYFuSNukIA4H7CkdX64IPTziTZ3YA=' 'sha256-o5peVZM+RaKkurv8hRJSB83DRpPa/y8o5gf+2B2/DqI='; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' https://cdn.jsdelivr.net; img-src 'self' blob: data: https:; media-src 'self' blob: https:; connect-src https://api.github.com https://cihwang.github.io 'self'; frame-src https://www.youtube-nocookie.com; base-uri 'none'; form-action 'self'; object-src 'none'">
 <meta charset="utf-8">
+<!-- 위 CSP: 토큰이 있는 페이지라 미리보기·도움말에 들어간 글 속 HTML의 스크립트(인라인·이벤트 속성)가 돌지 않게 한다.
+     아래 두 인라인 <script>는 sha256 해시로만 허용한다 — 고치면 해시도 바꿔야 하고, tests/csp.test.js가 맞는지 확인한다.
+     style-src의 'unsafe-inline'은 KaTeX·marked가 만드는 style 속성 때문이다(사이트와 같게 그려야 해서 걸러 내지 않는다). -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>글쓰기</title>
 <!-- 글꼴은 사이트(index.html)와 같은 것. 토큰이 있는 페이지라 글꼴 CSS 말고는 바깥에서 아무것도 불러오지 않는다. -->

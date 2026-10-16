@@ -4,7 +4,7 @@
  */
 import { slugFromPath } from '../markdown.js';
 import { BLOG_REPO } from './config.js';
-import { utf8ToBase64 } from './github.js';
+import { utf8ToBase64, ConflictError } from './github.js';
 import { mediaFileName, mediaRefs } from './media.js';
 import {
   parsePost, serializePost, slugFromTitle, postPath,
@@ -34,6 +34,12 @@ async function blobToBase64(blob) {
 }
 
 const withoutDraft = ({ draft, ...rest }) => rest;
+/**
+ * 고치는 중인 초안 파일에만 쓰는 머리말 키: 고치기 시작할 때의 공개본 blob sha. 출간·삭제 때 `expect`로 써서,
+ * 그 뒤 에디터 밖(git 등)에서 공개본이 바뀌었으면 덮지 않고 ConflictError가 나게 한다. 공개본에는 쓰지 않는다.
+ */
+const BASE_SHA = 'base_sha';
+const withoutBaseSha = ({ [BASE_SHA]: _base, ...rest }) => rest;
 const titleOf = (meta) => meta.title ?? '';
 
 /**
@@ -82,8 +88,10 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
   }
 
   /**
-   * 글을 연다. 블로그 경로를 열 때 초안 저장소에 같은 경로가 있으면(고치는 중) 그 내용을 열고 `blogSha`만 블로그에서 채운다.
+   * 글을 연다. 블로그 경로를 열 때 초안 저장소에 같은 경로가 있으면(고치는 중) 그 내용을 연다.
    * 초안을 열 때 블로그에 같은 경로가 있으면 `blogPath`·`blogSha`를 채운다.
+   * `blogSha`는 초안에 `base_sha`(고치기 시작할 때의 공개본 sha)가 있으면 그것, 없으면(옛 초안·초안 없음) 지금 공개본 sha다.
+   * 다만 초안 내용이 이미 공개본과 같으면(출간 뒤 초안 삭제만 실패) 덮을 것이 없으니 지금 공개본 sha다. `base_sha`는 `meta`에 넣지 않는다.
    * @param {{ repo: 'drafts'|'blog', path: string }} where
    * @throws {Error} 연 쪽 저장소에 파일이 없을 때
    */
@@ -91,10 +99,13 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
     const [draft, blog] = await Promise.all([readPost(draftsRepo, path), readPost(blogRepo, path)]);
     const main = repo === 'blog' ? (draft ?? blog) : draft;
     if (!main || (repo === 'blog' && !blog)) throw new Error(`글을 찾지 못했어요. (${repo}: ${path})`);
+    const meta = main === draft ? withoutBaseSha(draft.meta) : main.meta;
+    const base = draft?.meta[BASE_SHA];
+    const blogSha = blog && base && serializePost(withoutDraft(meta), main.body) !== blog.text ? base : blog?.sha ?? null;
     return {
-      meta: main.meta, body: main.body,
+      meta, body: main.body,
       draftPath: draft ? path : null, draftSha: draft?.sha ?? null,
-      blogPath: blog ? path : null, blogSha: blog?.sha ?? null,
+      blogPath: blog ? path : null, blogSha,
     };
   }
 
@@ -108,22 +119,23 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
 
   /**
    * 초안 저장소에 임시저장한다(`draft: true`를 붙여). 경로는 `draftPath`, 없으면 `blogPath`, 없으면 날짜·slug로 만든다.
-   * 공개본은 건드리지 않는다.
-   * @returns {Promise<object>} 새 `draftPath`·`draftSha`가 든 Doc
+   * 공개된 글을 고치는 중이면(`blogPath`·`blogSha`) 초안 파일에만 `base_sha: <blogSha>`를 써 둔다. 공개본은 건드리지 않는다.
+   * @returns {Promise<object>} 새 `draftPath`·`draftSha`가 든 Doc(`meta`에 `base_sha`는 없다)
    * @throws {Error} 제목·카테고리 검사 실패(GitHub 호출 없음). 새 글의 경로에 공개된 글이 이미 있으면(쓰기 전).
    *   그 사이 다른 기기가 저장했으면 `ConflictError`.
    */
   async function saveDraft(doc) {
     const errors = validateDraft(doc.meta, await categories());
     if (errors.length) throw new Error(`임시저장할 수 없어요: ${errors.join(', ')}`);
-    const meta = { ...doc.meta, draft: 'true' };
+    const meta = { ...withoutBaseSha(doc.meta), draft: 'true' };
+    const fileMeta = doc.blogPath && doc.blogSha ? { ...meta, [BASE_SHA]: doc.blogSha } : meta;
     const path = doc.draftPath ?? doc.blogPath ?? postPath(meta.date, meta.slug || slugFromTitle(meta.title));
     // 새 글이 공개된 다른 글과 같은 경로를 잡으면, 나중에 그 글을 "고치는 중"으로 보고 출간 때 덮어쓴다.
     if (!doc.draftPath && !doc.blogPath && await gh.getFile(blogRepo, path)) {
       throw new Error(`같은 날짜·주소의 공개된 글이 이미 있어요. 주소(slug)를 바꿔 주세요. (${path})`);
     }
     const { sha } = await gh.putFile(draftsRepo, path, {
-      text: serializePost(meta, doc.body), sha: doc.draftSha ?? undefined, message: `초안: ${titleOf(meta)}`,
+      text: serializePost(fileMeta, doc.body), sha: doc.draftSha ?? undefined, message: `초안: ${titleOf(meta)}`,
     });
     return { ...doc, meta, draftPath: path, draftSha: sha };
   }
@@ -140,7 +152,7 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
   }
 
   /**
-   * 블로그 저장소에 한 커밋으로 출간·수정하고, 그 뒤에만 초안을 지운다.
+   * 블로그 저장소에 한 커밋으로 출간·수정하고, 그 뒤에만 초안을 지운다. 공개본에는 `draft`·`base_sha` 줄을 쓰지 않는다.
    * 블로그에 이미 같은 내용이 있으면(커밋 뒤 초안 삭제가 실패한 다시 누르기) 커밋을 건너뛰고 초안만 지운다.
    * slug·날짜를 바꾸면 `postPath(date, slug)`로 옮기고 옛 경로를 같은 커밋에서 지운다. 사진은 블로그에 없는 것만 복사한다.
    * @param {{ path: string, cat: string, slug: string }[]} livePosts 같은 카테고리 slug 겹침 검사용
@@ -149,7 +161,7 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
    *   초안 삭제가 실패하면 그 오류를 던진다(블로그 커밋은 이미 됐고, 다시 부르면 초안 삭제만 한다).
    */
   async function publish(doc, livePosts) {
-    const meta = withoutDraft(doc.meta);
+    const meta = withoutDraft(withoutBaseSha(doc.meta));
     const text = serializePost(meta, doc.body);
     const slug = meta.slug || slugFromTitle(titleOf(meta));
     const original = doc.blogPath ? await readPost(blogRepo, doc.blogPath) : null;
@@ -197,12 +209,16 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
     await gh.deleteFile(draftsRepo, path, sha, `삭제: ${path}`);
   }
 
-  /** 공개된 글을 블로그에서 한 커밋으로 지운다. 사진·초안 저장소의 고치던 내용은 남긴다. 이미 없으면 아무것도 안 한다. */
-  async function deletePost(path) {
+  /**
+   * 공개된 글을 블로그에서 한 커밋으로 지운다. 사진·초안 저장소의 고치던 내용은 남긴다. 이미 없으면 아무것도 안 한다.
+   * @param {string} sha 지우려고 본 공개본의 blob sha(열 때 받은 `blogSha`). 새로 읽은 sha를 쓰면 그 사이 다른 곳에서 바뀐 글도 지운다.
+   * @throws {ConflictError} 공개본이 `sha`와 다를 때(지우지 않는다)
+   */
+  async function deletePost(path, sha) {
     const post = await readPost(blogRepo, path);
     if (!post) return;
     await gh.commitFiles(blogRepo, {
-      message: `삭제: ${titleOf(post.meta)}`, files: [], deletes: [path], expect: { [path]: post.sha },
+      message: `삭제: ${titleOf(post.meta)}`, files: [], deletes: [path], expect: { [path]: sha },
     });
   }
 
@@ -251,14 +267,18 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
    * 카테고리를 목록 끝에 더해 `site.json`을 한 커밋으로 올린다.
    * @param {string} name 앞뒤 공백은 뗀다
    * @returns {Promise<string[]>} 새 카테고리 목록
-   * @throws {Error} 이름 규칙 위반(GitHub 호출 없음). `site.json`이 그 사이 바뀌었으면 `ConflictError`.
+   * @throws {Error} 이름 규칙 위반이나 기억해 둔 목록과 겹침(GitHub 호출 없음). 지금 `site.json`에 이미 있거나
+   *   `site.json`이 그 사이 바뀌었으면 `ConflictError`.
    */
   async function addCategory(name) {
     if (!site) await getSite();
-    const current = site;
-    const errors = validateCategoryName(name, current.categories);
+    const errors = validateCategoryName(name, site.categories);
     if (errors.length) throw new Error(`카테고리를 만들 수 없어요: ${errors.join(', ')}`);
     const trimmed = name.trim();
+    // 기억해 둔 목록은 다른 기기에서 바뀌었을 수 있다. 지금 site.json으로 다시 확인하고 그 sha를 expect에 건다.
+    await getSite();
+    const current = site;
+    if (current.categories.includes(trimmed)) throw new ConflictError(409, `다른 곳에서 '${trimmed}' 카테고리를 먼저 만들었어요.`, SITE_PATH);
     const next = [...current.categories, trimmed];
     await gh.commitFiles(blogRepo, {
       message: `카테고리 추가: ${trimmed}`,
@@ -289,7 +309,8 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
    * 카테고리 이름을 바꾼다: 블로그(글 + `site.json`) 한 커밋, 그다음 초안 저장소 한 커밋.
    * 블로그 커밋이 실패하면 초안 저장소는 건드리지 않고 그 오류를 그대로 던진다.
    * @returns {Promise<{ posts: number, drafts: number }>} 바꾼 공개 글·초안 수
-   * @throws {Error} 이름 규칙 위반이나 없는 `from`(GitHub 호출 없음). 초안 쪽만 실패하면 "블로그는 바뀜, 초안 N편은 그대로"
+   * @throws {Error} 기억해 둔 목록 기준의 이름 규칙 위반이나 없는 `from`(GitHub 호출 없음). 지금 `site.json`에 `from`이 없거나
+   *   `to`가 이미 있으면(다른 기기가 먼저 바꿈) 아무것도 쓰지 않고 `ConflictError`. 초안 쪽만 실패하면 "블로그는 바뀜, 초안 N편은 그대로"
    *   메시지의 Error(원래 오류는 `cause`).
    */
   async function renameCategory(from, to) {
@@ -300,15 +321,19 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
     if (errors.length) throw new Error(`카테고리 이름을 바꿀 수 없어요: ${errors.join(', ')}`);
     const message = `카테고리 이름 바꾸기: ${from} → ${name}`;
 
-    const blog = await recategorizedPosts(blogRepo, from, name);
-    // 기억해 둔 것이 아니라 지금 site.json을 읽어 그 sha를 expect에 건다.
+    // 기억해 둔 목록이 아니라 지금 site.json으로 다시 확인하고 그 sha를 expect에 건다. 이미 바뀐 from으로 진행하면
+    // 바뀌지 않은 site.json과 0편을 커밋하고 성공이라고 하게 되고, 이미 있는 to로 바꾸면 카테고리가 겹친다.
     await getSite();
-    const renamed = site.categories.map((c) => (c === from ? name : c));
+    const current = site;
+    if (!current.categories.includes(from)) throw new ConflictError(409, `다른 곳에서 '${from}' 카테고리를 먼저 바꿨어요.`, SITE_PATH);
+    if (current.categories.includes(name)) throw new ConflictError(409, `다른 곳에서 '${name}' 카테고리를 먼저 만들었어요.`, SITE_PATH);
+    const blog = await recategorizedPosts(blogRepo, from, name);
+    const renamed = current.categories.map((c) => (c === from ? name : c));
     await gh.commitFiles(blogRepo, {
       message,
-      files: [...blog.files, { path: SITE_PATH, base64: utf8ToBase64(siteText(site.json, renamed)) }],
+      files: [...blog.files, { path: SITE_PATH, base64: utf8ToBase64(siteText(current.json, renamed)) }],
       deletes: [],
-      expect: { ...blog.expect, [SITE_PATH]: site.sha },
+      expect: { ...blog.expect, [SITE_PATH]: current.sha },
     });
     site = null;
 

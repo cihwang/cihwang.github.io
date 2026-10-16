@@ -441,7 +441,7 @@ test('deleteDraft·deletePost: 초안은 sha로 지우고, 블로그 글은 한 
 
   const path = 'posts/예시/글-01.md';
   const sha = fake.sha(BLOG, path);
-  await store.deletePost(path);
+  await store.deletePost(path, sha);
   assert.equal(fake.commits.length, 1, '블로그는 커밋 1번');
   assert.equal(fake.commits[0].message, '삭제: 글 01', '삭제 메시지에 제목');
   assert.deepEqual(fake.commits[0].deletes, [path], '그 글만 지운다');
@@ -569,4 +569,97 @@ test('renameCategory: 새 이름 규칙에 걸리거나 없는 카테고리면 G
   await assert.rejects(store.renameCategory('공부', '글'), /이미 있는 카테고리/, '이미 있는 이름으로는 못 바꾼다');
   await assert.rejects(store.renameCategory('없는것', '배움'), /없는것/, '없는 카테고리는 이름을 담아 오류');
   assert.equal(fake.calls.length, 0, 'GitHub 호출 없음');
+});
+
+test('publish: 고치던 초안을 만든 뒤 공개본이 직접 바뀌었으면 다시 열어 수정해도 ConflictError, 직접 고친 내용은 남는다', async () => {
+  const fake = standardFake();
+  const store = await storeWithSite(fake);
+  const path = 'posts/예시/글-01.md';
+  const baseSha = fake.sha(BLOG, path);
+  const doc = await store.open({ repo: 'blog', path });
+  await store.saveDraft({ ...doc, body: '에디터에서 고침\n' });
+  assert.match(fake.text(DRAFTS, path), new RegExp(`^base_sha: ${baseSha}$`, 'm'), '초안 파일에 고치기 시작한 공개본 sha를 남긴다');
+
+  // 에디터 밖에서(git·Claude) 공개본을 직접 고친다.
+  fake.overwrite(BLOG, path, post({ title: '글 01', category: '글', date: '2026-01-06' }, '직접 고침\n'));
+  for (const repo of ['drafts', 'blog']) {
+    const reopened = await store.open({ repo, path });
+    assert.equal(reopened.blogSha, baseSha, `${repo} 쪽으로 다시 열어도 blogSha는 지금 공개본이 아니라 고치기 시작한 sha`);
+    assert.equal(reopened.meta.base_sha, undefined, 'base_sha는 머리말(meta)로 화면에 나오지 않는다');
+    await assert.rejects(store.publish({ ...reopened, meta: { ...reopened.meta, slug: '글-01' } }, LIVE), ConflictError, '그 사이 바뀐 공개본은 덮지 않는다');
+  }
+  assert.equal(parsePost(fake.text(BLOG, path)).body, '직접 고침\n', '직접 고친 공개본이 되돌려지지 않는다');
+  assert.equal(fake.has(DRAFTS, path), true, '고치던 초안은 남는다');
+});
+
+test('publish: 평소 수정은 그대로 출간되고, 공개본에는 base_sha 줄이 없다', async () => {
+  const fake = standardFake();
+  const store = await storeWithSite(fake);
+  const path = 'posts/예시/글-01.md';
+  const doc = await store.open({ repo: 'blog', path });
+  const saved = await store.saveDraft({ ...doc, body: '고친 본문\n' });
+  assert.equal(saved.meta.base_sha, undefined, '돌려준 meta에는 base_sha가 없다(화면의 바뀜 비교가 어긋나지 않게)');
+  const reopened = await store.open({ repo: 'drafts', path });
+  // 기기 저장본 등으로 meta에 섞여 들어와도 공개본에는 쓰지 않는다.
+  const result = await store.publish({ ...reopened, meta: { ...reopened.meta, slug: '글-01', base_sha: reopened.blogSha } }, LIVE);
+  assert.deepEqual(result, { path, alreadyPublished: false }, '같은 경로에 수정');
+  const text = fake.text(BLOG, path);
+  assert.ok(!/^base_sha:/m.test(text), '공개본에 base_sha 줄이 없다');
+  assert.ok(!/^draft:/m.test(text), '공개본에 draft 줄이 없다');
+  assert.equal(parsePost(text).body, '고친 본문\n', '고친 내용이 출간된다');
+  assert.equal(fake.has(DRAFTS, path), false, '고치던 초안은 지워진다');
+});
+
+test('open: 초안 내용이 이미 공개본과 같으면(출간 뒤 초안 삭제만 실패) 지금 공개본 sha를 쓴다', async () => {
+  const fake = standardFake();
+  const store = await storeWithSite(fake);
+  const path = 'posts/예시/글-01.md';
+  const doc = await store.open({ repo: 'blog', path });
+  const saved = await store.saveDraft({ ...doc, meta: { ...doc.meta, slug: '글-01' }, body: '고친 본문\n' });
+  fake.fail('deleteFile', new GitHubError(500, '서버 오류'));
+  await assert.rejects(store.publish(saved, LIVE), /서버 오류/, '커밋 뒤 초안 삭제만 실패');
+  fake.heal();
+  const reopened = await store.open({ repo: 'drafts', path });
+  assert.equal(reopened.blogSha, fake.sha(BLOG, path), '덮을 것이 없으니 방금 출간한 공개본 sha');
+  const again = await store.publish({ ...reopened, body: '더 고침\n' }, LIVE);
+  assert.equal(again.alreadyPublished, false, '더 고친 내용은 충돌 없이 출간된다');
+  assert.equal(parsePost(fake.text(BLOG, path)).body, '더 고침\n', '공개본에 반영');
+});
+
+test('deletePost: 열 때 본 sha와 공개본이 다르면(다른 곳에서 바뀜) ConflictError, 글은 남는다', async () => {
+  const fake = standardFake();
+  const store = await storeWithSite(fake);
+  const path = 'posts/예시/글-01.md';
+  const opened = await store.open({ repo: 'blog', path });
+  fake.overwrite(BLOG, path, post({ title: '글 01', category: '글', date: '2026-01-06' }, '다른 곳에서 고침\n'));
+  await assert.rejects(store.deletePost(path, opened.blogSha), ConflictError, '새로 읽은 sha가 아니라 열 때 본 sha로 확인한다');
+  assert.equal(fake.has(BLOG, path), true, '바뀐 공개본을 지우지 않는다');
+  assert.equal(fake.commits.length, 0, '커밋 없음');
+});
+
+const siteWith = (categories) => JSON.stringify({ site: '[이름]', categories }, null, 2) + '\n';
+
+test('renameCategory: 다른 기기가 이미 from을 바꿨으면 ConflictError, 아무것도 커밋하지 않는다', async () => {
+  const fake = renameFake();
+  const store = await storeWithSite(fake);
+  fake.overwrite(BLOG, 'site.json', siteWith(['글', '배움', '만든 것', '취향']));
+  await assert.rejects(store.renameCategory('공부', '공책'), ConflictError, '기억해 둔 목록이 아니라 지금 site.json으로 확인한다');
+  assert.equal(fake.commits.length, 0, '바뀌지 않은 site.json을 커밋하고 성공이라고 하지 않는다');
+});
+
+test('renameCategory: 다른 기기가 to를 먼저 만들었으면 ConflictError, 겹치는 카테고리를 만들지 않는다', async () => {
+  const fake = renameFake();
+  const store = await storeWithSite(fake);
+  fake.overwrite(BLOG, 'site.json', siteWith(['글', '공부', '만든 것', '취향', '배움']));
+  await assert.rejects(store.renameCategory('공부', '배움'), ConflictError, '지금 목록에 있는 이름으로는 바꾸지 않는다');
+  assert.equal(fake.commits.length, 0, '커밋 없음');
+  assert.deepEqual(JSON.parse(fake.text(BLOG, 'site.json')).categories, ['글', '공부', '만든 것', '취향', '배움'], 'site.json 그대로');
+});
+
+test('addCategory: 다른 기기가 같은 이름을 먼저 만들었으면 ConflictError, 커밋 없음', async () => {
+  const fake = standardFake();
+  const store = await storeWithSite(fake);
+  fake.overwrite(BLOG, 'site.json', siteWith(['글', '공부', '만든 것', '취향', '일기']));
+  await assert.rejects(store.addCategory('일기'), ConflictError, '지금 site.json에 있는 이름은 다시 더하지 않는다');
+  assert.equal(fake.commits.length, 0, '커밋 없음');
 });

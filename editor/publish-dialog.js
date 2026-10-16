@@ -170,7 +170,11 @@ export function createPublishDialog(ctx) {
     const notCleared = ctx.dropLocal();
     if (!isCurrent()) return;
     setMsg(BUSY_TEXT);
-    const deployed = await waitForDeploy({ path, html: renderMarkdown(parsePost(publishedText(sent)).body) });
+    // build.js가 posts.json에 넣는 값과 같게: 올린 파일을 다시 읽은 머리말, slug가 없으면 경로에서, 날짜가 없으면 ''.
+    const { meta, body } = parsePost(publishedText(sent));
+    const deployed = await waitForDeploy({
+      path, html: renderMarkdown(body), cat: meta.category, title: meta.title, slug: meta.slug || slugFromPath(path), date: meta.date || '',
+    });
     if (!isCurrent()) return;
     // 기기 저장본을 못 지웠으면 그 안내를 볼 수 있게 옮기지 않는다.
     if (deployed && !notCleared) {

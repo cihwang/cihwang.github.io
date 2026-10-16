@@ -1,4 +1,5 @@
 // 임시글 목록 화면(`#/`): 초안 저장소·공개 저장소 초안·이 기기에만 있는 새 글을 보여 주고 이어 쓰기·삭제를 한다.
+import { BLOG_REPO } from './config.js';
 import { AuthError } from './github.js';
 import { $, local, editHash, failText, cloneTemplate, mount, addNotice, fetchLive } from './ui.js';
 
@@ -97,7 +98,9 @@ export function showList({ session, isCurrent, ask, loseLogin, logout, notice })
     status.textContent = '지우는 중…';
     try {
       if (draft.kind === 'public-draft') {
-        await store.deletePost(draft.path);
+        // 목록은 sha를 들고 있지 않아 지금 공개본을 읽어 그 sha로 지운다(초안 삭제와 같다).
+        const file = await gh.getFile(BLOG_REPO, draft.path);
+        if (file) await store.deletePost(draft.path, file.sha);
       } else if (draft.kind !== 'local') {
         const file = await gh.getFile(draftsRepo, draft.path);
         if (file) await store.deleteDraft(draft.path, file.sha);

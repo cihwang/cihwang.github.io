@@ -2,8 +2,11 @@
 import { AuthError, GitHubError } from './github.js';
 import { failText } from './ui.js';
 
-function deleteQuestion(doc) {
+function deleteQuestion(doc, localOnly) {
   const name = doc.meta.title || '(제목 없음)';
+  if (localOnly && (doc.blogPath || doc.draftPath)) {
+    return `"${name}" 글을 이 기기에서 지울까요? 이 기기에만 따로 남겨 둔 내용이라 되돌릴 수 없어요. GitHub에 있는 글은 건드리지 않아요.`;
+  }
   if (doc.blogPath) {
     const draft = doc.draftPath ? ' 고치던 내용(초안)은 임시글 목록에 남아요.' : '';
     return `"${name}" 글을 지울까요? 사이트에서 사라져요. 블로그 저장소에 커밋이 하나 생기고, 사진은 지우지 않아요.${draft}`;
@@ -13,21 +16,29 @@ function deleteQuestion(doc) {
 }
 
 /**
- * 열린 글을 지운다. 공개된 글이면 `deletePost`(블로그 한 커밋), 초안이면 열 때 받은 sha로 `deleteDraft`,
- * 이 기기에만 있는 새 글이면 기기 저장본만 지운다. 끝나면 목록으로 간다.
- * 초안 sha가 그 사이 바뀌었으면(다른 기기 저장) 지우지 않고 알린다.
- * @param {{ ask: (message: string, choices: object[]) => Promise<string>, getDoc: () => object, store: object,
+ * 열린 글을 지운다. 기기 저장 키가 `new:`(이 기기에만 있는 새 글, 또는 충돌 때 따로 남긴 사본)이면 기기 저장본만 지우고
+ * GitHub는 건드리지 않는다 — 사본은 원래 글의 `blogPath`·`draftPath`를 들고 있지만 그 글의 주인이 아니다.
+ * 그 밖에는 공개된 글이면 열 때 받은 `blogSha`로 `deletePost`(블로그 한 커밋), 초안이면 열 때 받은 sha로 `deleteDraft`.
+ * 끝나면 목록으로 간다. 공개본·초안이 그 사이 바뀌었으면(sha 다름) 지우지 않고 알린다.
+ * @param {{ ask: (message: string, choices: object[]) => Promise<string>, getDoc: () => object, key: () => string, store: object,
  *   saveLocal: () => boolean, stopLocal: () => void, dropLocal: () => string|null, goTo: (hash: string, notice: string) => void,
  *   setStatus: (text: string) => void, loseLogin: () => void, isCurrent: () => boolean }} ctx
- *   `dropLocal`은 기기 저장본을 지우고 못 지우면 그 이유 문장을 돌려준다.
+ *   `key`는 지금 기기 저장 키. `dropLocal`은 기기 저장본을 지우고 못 지우면 그 이유 문장을 돌려준다.
  */
 export async function deleteOpenDoc(ctx) {
   const doc = ctx.getDoc();
-  const choice = await ctx.ask(deleteQuestion(doc), [{ label: '취소', value: '' }, { label: '삭제', value: 'delete', primary: true }]);
+  const localOnly = ctx.key().startsWith('new:');
+  const choice = await ctx.ask(deleteQuestion(doc, localOnly), [{ label: '취소', value: '' }, { label: '삭제', value: 'delete', primary: true }]);
   if (choice !== 'delete' || !ctx.isCurrent()) return;
+  if (localOnly) {
+    ctx.stopLocal();
+    const notCleared = ctx.dropLocal();
+    if (ctx.isCurrent()) ctx.goTo('#/', notCleared ? `이 기기에서 지우지 못했어요. ${notCleared}` : '지웠어요.');
+    return;
+  }
   ctx.setStatus('지우는 중…');
   try {
-    if (doc.blogPath) await ctx.store.deletePost(doc.blogPath);
+    if (doc.blogPath) await ctx.store.deletePost(doc.blogPath, doc.blogSha);
     else if (doc.draftPath) await ctx.store.deleteDraft(doc.draftPath, doc.draftSha);
   } catch (e) {
     if (!ctx.isCurrent()) return;
