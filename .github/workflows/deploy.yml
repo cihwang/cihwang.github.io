@@ -40,6 +40,14 @@ jobs:
           mkdir -p _site
           cp index.html styles.css wheel.js sky.js help.js posts.json _site/
           cp -r media _site/
+          # 에디터가 브라우저에서 markdown.js를 import map으로 불러오는 데 필요한 것들
+          node tools/vendor.js
+          cp markdown.js _site/
+          cp -r vendor _site/
+          mkdir -p _site/node_modules
+          for p in marked marked-highlight marked-footnote marked-gfm-heading-id github-slugger marked-katex-extension katex marked-emoji gemoji highlight.js; do
+            cp -r node_modules/$p _site/node_modules/
+          done
 
       - uses: actions/configure-pages@v6.0.0
 

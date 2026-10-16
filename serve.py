@@ -49,6 +49,11 @@ class DevHandler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # 에디터 미리보기가 쓰는 vendor/highlight.js는 git에 없으니 서버를 켜기 전에 만든다.
+    vendor = subprocess.run(["node", "tools/vendor.js"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+    if vendor.returncode != 0:
+        print("tools/vendor.js 실패:\n" + (vendor.stdout + vendor.stderr).strip())
+        raise SystemExit(1)
     handler = partial(DevHandler, directory=str(ROOT))
     print(f"http://127.0.0.1:{PORT}/")
     ThreadingHTTPServer(("127.0.0.1", PORT), handler).serve_forever()
