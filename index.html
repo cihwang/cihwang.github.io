@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[이름] — 급하지 않게 쓰는 개발 노트</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- 글꼴: 본문 Pretendard · 제목·라벨 마루 부리(한글) + Newsreader Italic(영문) · 숫자·코드 D2Coding. 모두 OFL. -->
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@1,6..72,400&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css" rel="stylesheet">
+<link href="https://hangeul.pstatic.net/hangeul_static/css/maru-buri.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@kfonts/d2coding@0.2.0/index.css" rel="stylesheet">
+<!-- 수식(KaTeX) 모양. 버전은 package.json의 katex와 맞춘다. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.18.11/dist/katex.min.css">
+<link rel="stylesheet" href="styles.css">
+<script>
+  // 화이트/블랙: 사용자가 고른 값(이 브라우저에 저장)이 먼저, 없으면 운영체제 설정을 따른다.
+  // 그리기 전에 정해야 블랙을 고른 사람에게 흰 화면이 번쩍이지 않는다. 바꾸는 단추는 wheel.js에 있다.
+  (() => {
+    let saved = null;
+    try { saved = localStorage.getItem('theme'); } catch (err) { /* 저장소를 못 쓰면 운영체제 설정을 따른다 */ }
+    const system = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = saved === 'light' || saved === 'dark' ? saved : system;
+  })();
+</script>
+</head>
+<body>
+<h1 class="sr-only">[이름] — 급하지 않게 쓰는 개발 노트</h1>
+
+<!-- 모든 화면 위쪽의 휠 하나. 돌리기 = 옆으로, 누르기 = 안으로, 위 가운데 이름 = 밖으로. -->
+<header class="wheel" data-role="wheel">
+  <div class="wheel-ticks" aria-hidden="true" data-role="ticks"></div>
+  <nav class="wheel-labels" aria-label="휠" data-role="labels"></nav>
+  <button class="wheel-hub" type="button" data-role="hub"></button>
+</header>
+
+<!-- 화이트/블랙: 해와 달. 어느 화면에서든 바꿀 수 있게 오른쪽 위에 고정(휠 밖이라 스크롤로 흐려지지 않는다).
+     해와 달은 지평선 아래 한 점을 축으로 같은 궤도 위에 마주 붙어 있다. 누를 때마다 같은 방향으로 반 바퀴 돈다:
+     해는 오른쪽 구름 뒤로 지고, 왼쪽에서 달이 뜬다. -->
+<button class="sky" type="button" data-role="sky" aria-label="블랙으로 바꾸기">
+  <svg viewBox="0 0 36 36" width="36" height="36" aria-hidden="true">
+    <defs>
+      <clipPath id="sky-above"><rect x="0" y="0" width="36" height="25"></rect></clipPath>
+      <mask id="sky-moon-cut"><rect x="0" y="0" width="36" height="36" fill="#fff"></rect><circle cx="20.4" cy="15.4" r="3.4" fill="#000"></circle></mask>
+    </defs>
+    <g class="sky-stars">
+      <circle cx="9" cy="9" r="0.7"></circle>
+      <circle cx="13.5" cy="5" r="0.5"></circle>
+    </g>
+    <g clip-path="url(#sky-above)">
+      <g class="sky-orbit" data-role="sky-orbit">
+        <g class="sky-sun">
+          <circle cx="18" cy="17" r="3.6"></circle>
+          <path d="M18 10.6v-1.6M18 23.4v1.6M11.6 17h-1.6M24.4 17h1.6M13.5 12.5l-1.1-1.1M22.5 21.5l1.1 1.1M13.5 21.5l-1.1 1.1M22.5 12.5l1.1-1.1"></path>
+        </g>
+        <!-- 달: 궤도 반대편(축 기준 180도)에 미리 놓아 둔다 -->
+        <g transform="rotate(180 18 31)">
+          <circle class="sky-moon" cx="18" cy="17" r="4" mask="url(#sky-moon-cut)"></circle>
+        </g>
+      </g>
+    </g>
+    <path class="sky-cloud" d="M21.5 25h9.2a2.4 2.4 0 0 0-.7-4.7 3.2 3.2 0 0 0-6-1 2.5 2.5 0 0 0-2.5 5.7z"></path>
+    <path class="sky-horizon" d="M5 25h26"></path>
+  </svg>
+</button>
+
+<main class="page" data-role="page">
+  <section class="view" data-view="home">
+    <header class="intro">
+      <p class="intro-name">[이름]</p>
+      <p class="intro-line">급하지 않게 쓰는 개발 노트</p>
+    </header>
+    <!-- 한 화면에 다 보이게 2열: 왼쪽 최근 글, 오른쪽 많이 읽힌 글 + 지금. 좁은 화면에선 1열. -->
+    <div class="home-cols">
+      <section aria-labelledby="recent-title">
+        <h2 id="recent-title" class="section-title">최근 글</h2>
+        <ol class="rows" data-role="recent"></ol>
+      </section>
+      <div class="home-side">
+        <!-- 많이 읽힌 글: 조회수 집계(GoatCounter)를 붙이면 채운다. 지금은 자리만. -->
+        <section aria-labelledby="popular-title">
+          <h2 id="popular-title" class="section-title">많이 읽힌 글</h2>
+          <ol class="rows">
+            <li><span class="row is-static"><span class="row-date">01</span><span class="row-title">[많이 읽힌 글]</span><span class="row-cat">[조회수]</span></span></li>
+            <li><span class="row is-static"><span class="row-date">02</span><span class="row-title">[많이 읽힌 글]</span><span class="row-cat">[조회수]</span></span></li>
+            <li><span class="row is-static"><span class="row-date">03</span><span class="row-title">[많이 읽힌 글]</span><span class="row-cat">[조회수]</span></span></li>
+          </ol>
+        </section>
+        <section aria-labelledby="now-title">
+          <h2 id="now-title" class="section-title">지금</h2>
+          <p class="now-line">[요즘 하고 있는 일 한 줄]</p>
+        </section>
+      </div>
+    </div>
+    <footer class="foot">
+      <span class="foot-links"><a href="#">GitHub</a><a href="#">메일</a><a href="#">RSS</a></span>
+      <span class="foot-info">
+        <!-- 방문자 수: 조회수 집계를 붙이면 채운다. -->
+        <span>방문 오늘 [n] · 전체 [n]</span>
+        <span>서울 <time data-role="clock"></time></span>
+      </span>
+    </footer>
+  </section>
+
+  <section class="view" data-view="cat" hidden>
+    <h2 class="section-title" data-role="cat-title"></h2>
+    <ol class="rows" data-role="cat-rows"></ol>
+  </section>
+
+  <article class="view" data-view="post" hidden>
+    <p class="post-meta" data-role="post-meta"></p>
+    <h2 class="post-title" data-role="post-title"></h2>
+    <div class="post-body" data-role="post-body"></div>
+    <nav class="post-nav" aria-label="이웃 글">
+      <button class="post-nav-btn" type="button" data-role="prev"></button>
+      <button class="post-nav-btn is-next" type="button" data-role="next"></button>
+    </nav>
+  </article>
+</main>
+
+<p class="sr-only" aria-live="polite" data-role="announce"></p>
+
+<script src="sky.js"></script>
+<script src="help.js"></script>
+<script src="wheel.js"></script>
+</body>
+</html>

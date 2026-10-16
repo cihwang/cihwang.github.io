@@ -1,0 +1,58 @@
+# main에 푸시하면 글(posts/*.md)로 posts.json을 만들고 GitHub Pages에 올린다.
+# 초안(draft: true)과 글쓰기 도움말은 배포본에서 빠진다(node build.js는 --drafts 없이 돈다).
+# 처음 한 번: 저장소 Settings → Pages → Source를 "GitHub Actions"로 둔다.
+name: Deploy blog
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 연달아 푸시해도 마지막 것만 올라가게, 진행 중인 배포는 끊지 않는다.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: posts/*.md → posts.json (초안 제외)
+        run: node build.js
+
+      # 사이트에 필요한 파일만 모은다(글 원본·빌드 도구·node_modules는 올리지 않는다).
+      - name: Collect site files
+        run: |
+          mkdir -p _site
+          cp index.html styles.css wheel.js sky.js help.js posts.json _site/
+          cp -r media _site/
+
+      - uses: actions/configure-pages@v6.0.0
+
+      - uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5.0.1
