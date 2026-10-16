@@ -1,7 +1,8 @@
 /**
  * 모든 화면 위쪽의 휠 하나. 생김새와 움직임은 rauno.me/craft의 Wheel Interface(2024.04)를 따랐다.
  *
- * 휠 위 순서: 홈 · 글 · (글들) · 공부 · (글들) · 만든 것 · (글들) · 취향 · (글들)
+ * 원 한 바퀴(100%)를 홈과 카테고리가 똑같이 나눠 갖는다(홈 + 카테고리 4개면 20%씩).
+ * 글은 자기 카테고리 구간 안에 고르게 놓인다. 휠은 끝없이 돈다(취향 다음이 다시 홈).
  * 단계는 확대 정도로 나눈다.
  *   0단계(축소): 홈·카테고리 이름만 보인다. 글은 이름 없는 짧은 눈금. 아래 = 홈 랜딩 또는 카테고리 글 목록.
  *   1단계(확대): 카테고리 구간이 벌어지며 글 제목이 보인다. 아래 = 글 본문.
@@ -11,32 +12,33 @@
  *   누르기 = 안으로(라벨·목록 누르기, Enter, 트랙패드 핀치 아웃)
  *   나가기 = 밖으로(맨 위 가운데 이름, Esc, 핀치 인)
  *
- * 위치(pos)는 '칸' 단위다. 가운데 오는 칸 = -pos. 확대해도 같은 칸이 가운데 남는다.
+ * 위치 단위는 '칸'(u). 한 바퀴 = PERIOD 칸, 한 구간 = SECTOR 칸. 가운데 오는 자리 = -pos(한 바퀴로 감아서).
  */
 (async () => {
   'use strict';
 
   const ARC_TOP = 170;             // 원 꼭대기의 y(px). styles.css --wheel-h와 함께 움직인다
   // 단계마다 원 크기 자체가 다르다(영상처럼 꼭대기 한 점을 고정하고 원이 커졌다 작아진다).
-  // 0단계는 더 휜 작은 원, 1단계는 평평한 큰 원. 그 사이를 오가는 게 '확대·축소'로 읽힌다.
   const VISIBLE_DEG = [100, 60];   // 화면 너비에 들어오는 호의 각도: [0단계, 1단계]
   const MIN_R = [420, 560];        // 좁은 화면에서 원이 너무 작아지지 않게
-  const SLOT_PX = [20, 144];       // 칸 간격(호 위 px): [0단계, 1단계]
+  const SECTOR = 12;               // 구간 하나(홈 또는 카테고리 하나)의 칸 수
+  const FINE = 4;                  // 칸 하나를 나누는 가는 눈금 수(1단계에서 촘촘한 결)
+  // 0단계: 구간 하나가 화면 너비의 SECTOR_SHARE만큼(좁은 화면에선 최소 SECTOR_MIN_PX). 이웃 카테고리가 양옆에 보인다.
+  const SECTOR_SHARE = 0.2;
+  const SECTOR_MIN_PX = 140;
+  const POST_GAP_PX = 144;         // 1단계: 가장 촘촘한 카테고리의 글 사이 간격(px)
   const Z_MIN = -0.6;              // 멀리 갈 때 0단계보다 더 물러날 수 있는 한계
-  const FINE = 4;                  // 칸 하나를 나누는 가는 눈금 수(1단계에서 36px 간격 = 영상과 비슷)
-  const PAD_SLOTS = 64;            // 양 끝 바깥에 이어 그리는 빈 눈금 칸 수
   const ZOOM_MS = 900;             // 단계를 바꾸는 확대·축소(영상과 같은 길이)
-  const FLIGHT_MS = [420, 20, 900]; // 같은 단계 이동: [기본, 칸당 추가, 최대]
+  const FLIGHT_MS = [420, 0.8, 900]; // 같은 단계 이동: [기본, 화면 거리 1px당 추가, 최대]
   const SNAP = 0.14;               // 60fps 기준 프레임당 목표까지 남은 거리를 좁히는 비율
   const FRICTION = 0.93;           // 60fps 기준 프레임당 감속
-  const EDGE_RESIST = 0.35;        // 끝을 넘어 끌 때 저항
   const SWAP_MS = 220;             // 아래 내용이 흐려졌다 바뀌는 시간
   const WHEEL_IDLE_MS = 140;       // 트랙패드 입력이 끊긴 뒤 가까운 항목에 붙기까지
   // 섬세한 스크롤: 손을 떼기 직전 CAREFUL_WINDOW_MS 동안 평균 속도가 CAREFUL_PX_PER_MS보다 느리고,
-  // 가운데가 다른 단계의 눈금 칸 PRECISE_SLOT 안에 멈췄으면, ARM_MS 동안 차오른 뒤 그 항목으로 간다.
+  // 가운데가 다른 단계의 항목 눈금에서 PRECISE_PX 안에 멈췄으면, ARM_MS 동안 차오른 뒤 그 항목으로 간다.
   const CAREFUL_PX_PER_MS = 0.25;
   const CAREFUL_WINDOW_MS = 300;
-  const PRECISE_SLOT = 1 / 3;
+  const PRECISE_PX = 8;
   const ARM_MS = 900;
   const DIM_RED = 0.4;             // 다른 단계 항목·사이 눈금이 가운데 올 때 '지금 여기' 색의 세기
   const PINCH_STEP = 40;           // 핀치 누적량이 이만큼 넘으면 한 단계 들어가거나 나온다
@@ -44,7 +46,7 @@
 
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // ── 데이터 → 휠 위 칸 ───────────────────────────────────
+  // ── 데이터 → 원 위 자리 ─────────────────────────────────
   // posts.json은 build.js가 posts/*.md로 만든다(로컬에선 serve.py가 저장할 때마다 다시 만든다).
   let data;
   try {
@@ -60,27 +62,35 @@
   // 같은 목록을 다시 받지 않게 다른 스크립트(help.js: 글쓰기 도움말)에 넘겨준다.
   document.dispatchEvent(new CustomEvent('postsloaded', { detail: data }));
   const fmtDate = (d) => (d ? d.replace(/-/g, '.') : '[날짜]');
-  const slots = [];
+
+  // slots = 원 위의 항목(홈, 카테고리, 글). 번호가 곧 항목의 이름표다. u = 원 위 자리(칸).
+  // 구간 k(0 = 홈)는 [k*SECTOR, (k+1)*SECTOR). 카테고리 눈금은 구간 시작, 글 n편은 그 뒤를 n+1 등분한 자리.
+  // 글 자리는 가는 눈금 격자에 맞춰 반올림한다(사이 눈금과 엇갈려 보이지 않게).
+  const slots = [{ kind: 'home', u: 0, catIndex: -1 }];
   const postSlots = [];
   const catSlot = {};
-  slots.push({ kind: 'home' });
-  slots.push({ kind: 'gap' }, { kind: 'gap' });
-  data.categories.forEach((cat) => {
+  data.categories.forEach((cat, ci) => {
+    const start = (ci + 1) * SECTOR;
     catSlot[cat] = slots.length;
-    slots.push({ kind: 'cat', cat: cat });
-    data.posts.filter((p) => p.cat === cat).forEach((post) => {
+    slots.push({ kind: 'cat', cat: cat, u: start, catIndex: ci });
+    const list = data.posts.filter((p) => p.cat === cat);
+    list.forEach((post, j) => {
       postSlots.push(slots.length);
-      slots.push({ kind: 'post', cat: cat, post: post });
+      const u = Math.round((start + (j + 1) * SECTOR / (list.length + 1)) * FINE) / FINE;
+      slots.push({ kind: 'post', cat: cat, post: post, u: u, catIndex: ci });
     });
-    slots.push({ kind: 'gap' }, { kind: 'gap' });
   });
   const HOME = 0;
+  const PERIOD = (data.categories.length + 1) * SECTOR; // 한 바퀴
   const targets = [slots.map((x, i) => (x.kind === 'home' || x.kind === 'cat' ? i : -1)).filter((i) => i >= 0), postSlots];
   const targetSet = targets.map((list) => new Set(list));
-  // 칸마다 속한 카테고리 번호(홈 쪽은 -1). 이동이 카테고리 경계를 넘는지 볼 때 쓴다.
-  const catIndexOf = [];
-  slots.reduce((ci, x, i) => { const next = x.kind === 'cat' ? ci + 1 : ci; catIndexOf[i] = next; return next; }, -1);
+  const itemFine = new Set(slots.map((x) => Math.round(x.u * FINE))); // 항목 자리의 가는 눈금 번호(사이 눈금을 겹쳐 그리지 않게)
   const postsOf = (cat) => postSlots.filter((i) => slots[i].cat === cat);
+  // 1단계 확대 정도: 가장 촘촘한 카테고리의 글 간격이 POST_GAP_PX가 되게.
+  const minPostGapU = data.categories.reduce((m, cat) => {
+    const n = postsOf(cat).length;
+    return n ? Math.min(m, SECTOR / (n + 1)) : m;
+  }, SECTOR / 2);
   // 최근 글: 날짜가 늦은 순. 날짜 없는 글(예시 초안 등)은 뒤로.
   const recent = postSlots.slice().sort((a, b) => {
     const da = slots[a].post.date;
@@ -88,7 +98,7 @@
     return da === db ? 0 : da < db ? 1 : -1;
   });
 
-  // ── 주소 ↔ 칸 ─────────────────────────────────────────
+  // ── 주소 ↔ 항목 ────────────────────────────────────────
   // #/ = 홈, #/공부 = 카테고리, #/공부/휠을-만들며 = 그 카테고리의 글(slug). 글을 더 써도 기존 주소가 안 바뀐다.
   // 깊이(홈 0 · 카테고리 1 · 글 2)가 곧 브라우저 기록의 깊이다. 그래서 뒤로 가기 = 나가기.
   const depthOf = (slot) => ({ home: 0, cat: 1, post: 2 })[slots[slot].kind];
@@ -143,20 +153,12 @@
   const clockEl = $('[data-role="clock"]');
   const announcer = $('[data-role="announce"]');
 
-  const fStart = -PAD_SLOTS * FINE;
-  const fEnd = (slots.length + PAD_SLOTS) * FINE;
-  const tickEls = [];
-  for (let f = fStart; f <= fEnd; f++) {
-    const el = document.createElement('span');
-    el.className = 'tick';
-    el.style.display = 'none';
-    tickLayer.appendChild(el);
-    tickEls.push(el);
-  }
+  // 눈금 요소는 화면에 보이는 만큼만 그때그때 꺼내 쓴다(원 한 바퀴가 몇 번 보이든 같은 방식).
+  const tickPool = [];
+  let tickUsed = 0;
 
   const labels = [];
   slots.forEach((slot, i) => {
-    if (slot.kind === 'gap') return;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'label' + (slot.kind === 'post' ? '' : ' is-group');
@@ -170,19 +172,19 @@
     btn.append(name, sub);
     btn.addEventListener('click', () => press(i));
     labelLayer.appendChild(btn);
-    labels.push({ slot: i, el: btn, w: 0, h: 0, shown: false });
+    labels.push({ slot: i, el: btn, w: 0, h: 0 });
   });
 
   // ── 상태 ─────────────────────────────────────────────
   const s = {
     level: 0,          // 목표 단계
-    z: 0,              // 지금 확대 정도(0~1)
+    z: 0,              // 지금 확대 정도(0~1, 멀리 이동하는 동안은 0보다 작을 수 있다)
     flight: null,      // 진행 중인 이동(flyTo)
-    pos: -HOME,
-    vel: 0,
+    pos: -slots[HOME].u,
+    vel: 0,            // 칸/프레임(60fps 기준)
     rotTarget: null,
-    cur: HOME,         // 아래에 보여 주는 칸
-    aim: -1,           // 돌아가는 중인 칸. 빨간 눈금이 먼저 여기로 간다
+    cur: HOME,         // 아래에 보여 주는 항목
+    aim: -1,           // 돌아가는 중인 항목
     drag: null,
     justDragged: false,
     wheelTimer: null,
@@ -191,18 +193,15 @@
     hover: null,
     raf: null,
     lastT: 0,
-    shown: new Set(),
-    centerF: 0,           // 가운데를 지나는 가는 눈금 번호
-    centerFloat: 0,       // 가운데 위치(가는 눈금 단위, 소수)
     finesVisible: false,  // 가는 눈금이 보이는 단계인가
-    centerSlot: -1,       // 그 눈금이 칸 자리면 칸 번호, 아니면 -1
-    centerIsTarget: true, // 그 칸이 지금 단계에서 고를 수 있는 항목인가
+    centerSlot: -1,       // 가운데에 걸린 항목(없으면 -1)
+    centerIsTarget: true, // 그 항목이 지금 단계에서 고를 수 있는 항목인가
     arm: null,            // 섬세하게 멈춘 다른 단계 항목 { slot, start }. 차오르면 그 항목으로 간다
     armP: 0,              // 차오른 정도(0~1)
     wheelLog: [],         // 트랙패드 입력 기록 { t, px } — 섬세함 판정용
     swapTimer: null,
-    historyLock: null, // 뒤로/앞으로 가기로 움직이는 중인 칸. 도착해도 기록을 다시 쓰지 않는다
-    pendingOut: null   // 화면에서 '나가기'를 눌러 history.back()을 부른 뒤 도착할 칸
+    historyLock: null,    // 뒤로/앞으로 가기로 움직이는 중인 항목. 도착해도 기록을 다시 쓰지 않는다
+    pendingOut: null      // 화면에서 '나가기'를 눌러 history.back()을 부른 뒤 도착할 항목
   };
 
   // ── 계산 도우미 ────────────────────────────────────────
@@ -211,6 +210,10 @@
   const lerp = (a, b, t) => a + (b - a) * t;
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  // 한 바퀴로 감아 [-PERIOD/2, PERIOD/2)로: 원 위에서 가장 가까운 쪽 거리.
+  const wrap = (x) => x - PERIOD * Math.round(x / PERIOD);
+  // 항목이 가운데에서 얼마나 떨어져 있나(칸, 시계 방향 +).
+  const deltaOf = (slot) => wrap(slots[slot].u + s.pos);
 
   // z: 0 = 0단계, 1 = 1단계, 0보다 작으면 더 물러난 상태(멀리 이동하는 도중).
   // 반지름과 칸 간격을 모두 기하 보간한다: 선형으로 키우면 끝에서 갑자기 커져 보인다.
@@ -220,14 +223,17 @@
     const R0 = Math.max(vw / 2 / Math.sin(rad(VISIBLE_DEG[0] / 2)), MIN_R[0]);
     const R1 = Math.max(vw / 2 / Math.sin(rad(VISIBLE_DEG[1] / 2)), MIN_R[1]);
     const R = R0 * Math.pow(R1 / R0, z);
-    const slotPx = SLOT_PX[0] * Math.pow(SLOT_PX[1] / SLOT_PX[0], z);
+    const unitPx0 = Math.max(vw * SECTOR_SHARE, SECTOR_MIN_PX) / SECTOR;
+    const unitPx1 = Math.max(POST_GAP_PX / minPostGapU, unitPx0 * 2);
+    const unitPx = unitPx0 * Math.pow(unitPx1 / unitPx0, z);
     const f = s.flight;
     return {
-      vw: vw, R: R, slotPx: slotPx,
+      vw: vw, R: R, unitPx: unitPx,
       e: clamp(z, 0, 1),               // 눈금 색·길이용 단계 정도
-      stepDeg: deg(slotPx / R),
+      stepDeg: deg(unitPx / R),        // 칸 하나의 각도
       half: deg(Math.asin(Math.min(1, vw / 2 / R))),
       cx: vw / 2, cy: ARC_TOP + R,
+      fineOpacity: clamp((unitPx / FINE - 6) / 10, 0, 1), // 가는 눈금은 간격이 넓어질 때만
       // 확대·축소 한가운데에서 눈금이 잠깐 길고 굵어진다(영상의 중간 프레임과 같은 느낌).
       pulse: f ? f.pulse : 0,
       // 크게 움직이는 동안은 라벨을 거의 감췄다가 도착하면 다시 띄운다.
@@ -235,54 +241,44 @@
     };
   }
 
-  const angleOf = (slotF, g) => (slotF + s.pos) * g.stepDeg;
-
   function nearestTarget(level) {
-    let best = targets[level][0], bd = Infinity;
-    targets[level].forEach((i) => { const d = Math.abs(i + s.pos); if (d < bd) { bd = d; best = i; } });
+    let best = null, bd = Infinity;
+    targets[level].forEach((i) => { const d = Math.abs(deltaOf(i)); if (d < bd) { bd = d; best = i; } });
     return best;
   }
 
-  function bounds() {
-    const list = targets[s.level];
-    return { min: -list[list.length - 1], max: -list[0] };
+  // 가운데에 가장 가까운 항목(종류 무관)과 그 거리(칸).
+  function nearestItem() {
+    let best = HOME, bd = Infinity;
+    slots.forEach((_, i) => { const d = Math.abs(deltaOf(i)); if (d < bd) { bd = d; best = i; } });
+    return { slot: best, dist: bd };
   }
 
   // ── 그리기: 눈금 ───────────────────────────────────────
-  function tickStyle(f, g) {
-    const slot = f / FINE;
-    const onSlot = f % FINE === 0;
-    const inside = slot >= 0 && slot < slots.length;
-    const kind = onSlot && inside ? slots[slot].kind : (inside ? 'fine' : 'out');
-    const fineGap = g.slotPx / FINE;
-    const fineOpacity = clamp((fineGap - 6) / 10, 0, 1);
-    let st;
-    if (kind === 'post') st = g.e > 0.5 ? { cls: 'tick is-event', rgb: palette.event } : { cls: 'tick is-soft', rgb: palette.soft };
-    else if (kind === 'home' || kind === 'cat') st = g.e > 0.5 ? { cls: 'tick is-soft', rgb: palette.soft } : { cls: 'tick is-event', rgb: palette.event };
-    else st = { cls: 'tick', rgb: palette.tick };
-    if (kind === 'post') { st.len = lerp(12, 32, g.e); st.ext = lerp(0, 12, g.e); st.o = 1; }
-    else if (kind === 'home' || kind === 'cat') { st.len = lerp(30, 28, g.e); st.ext = lerp(12, 4, g.e); st.o = 1; }
-    else {
-      // 빈 칸·바깥: 칸 자리에는 0단계에서도 짧은 눈금을 둬 호가 끊기지 않게, 가는 눈금은 간격이 넓어질 때만.
-      const base = onSlot ? Math.max(0.6, fineOpacity) : fineOpacity;
-      st.len = lerp(8, 22, g.e); st.ext = 0; st.o = base * (kind === 'out' ? 0.6 : 1);
+  // 항목 눈금의 모양. 글은 확대할수록 진하고 길어지고, 홈·카테고리는 반대로 옅어진다.
+  function itemStyle(slot, g) {
+    const kind = slots[slot].kind;
+    if (kind === 'post') {
+      return g.e > 0.5
+        ? { cls: 'tick is-event', rgb: palette.event, len: lerp(12, 32, g.e), ext: lerp(0, 12, g.e), o: 1, slot: slot }
+        : { cls: 'tick is-soft', rgb: palette.soft, len: lerp(12, 32, g.e), ext: lerp(0, 12, g.e), o: 1, slot: slot };
     }
-    // 가운데 빨강의 후보: 화면에 보이는 눈금만(가는 눈금이 숨은 단계에선 칸 눈금만).
-    st.candidate = onSlot || s.finesVisible;
-    st.target = onSlot && inside && targetSet[s.level].has(slot);
-    return st;
+    return g.e > 0.5
+      ? { cls: 'tick is-soft', rgb: palette.soft, len: lerp(30, 28, g.e), ext: lerp(12, 4, g.e), o: 1, slot: slot }
+      : { cls: 'tick is-event', rgb: palette.event, len: lerp(30, 28, g.e), ext: lerp(12, 4, g.e), o: 1, slot: slot };
   }
 
-  // 가운데 빨강을 눈금 사이로 흐르게: 가운데까지의 거리로 0~1 무게를 매겨, 가까울수록 서서히 붉어지고 살짝 길어진다.
+  // 가운데 빨강을 눈금 사이로 흐르게: 가운데까지의 거리(칸)로 0~1 무게를 매겨, 가까울수록 서서히 물들고 살짝 길어진다.
   // 두 눈금 사이에 있으면 둘이 나눠 물든다. 지금 단계의 항목은 진하게, 아니면 흐리게.
-  function centerGlow(f, st) {
+  // 가는 눈금이 숨은 단계에서는 칸 눈금·항목 눈금만 물든다(없는 자리에 색이 생기지 않게).
+  function centerGlow(delta, st) {
     if (!st.candidate) return 0;
-    const span = s.finesVisible ? 1 : FINE;
-    let w = clamp(1 - Math.abs(f - s.centerFloat) / span, 0, 1);
+    const span = s.finesVisible ? 1 / FINE : 1;
+    let w = clamp(1 - Math.abs(delta) / span, 0, 1);
     w = w * w * (3 - 2 * w);
-    let strength = st.target ? 1 : DIM_RED;
+    let strength = st.slot != null && targetSet[s.level].has(st.slot) ? 1 : DIM_RED;
     // 섬세하게 멈춘 다른 단계 항목: 흐린 빨강에서 진한 빨강으로 천천히 차오른다.
-    if (s.arm && f === s.arm.slot * FINE) strength = DIM_RED + (1 - DIM_RED) * easeInOut(s.armP);
+    if (s.arm && st.slot === s.arm.slot) strength = DIM_RED + (1 - DIM_RED) * easeInOut(s.armP);
     return w * strength;
   }
 
@@ -300,30 +296,51 @@
   let palette = readPalette();
   document.addEventListener('themechange', () => { palette = readPalette(); render(); });
 
+  function drawTick(delta, st, g) {
+    let el = tickPool[tickUsed];
+    if (!el) { el = document.createElement('span'); tickLayer.appendChild(el); tickPool.push(el); }
+    tickUsed++;
+    if (el._cls !== st.cls) { el.className = st.cls; el._cls = st.cls; }
+    el.style.display = '';
+    const glow = centerGlow(delta, st);
+    const ext = st.ext + lerp(8, 16, g.e) * glow;
+    const o = Math.max(st.o, glow);
+    el.style.opacity = o > 0.99 ? '' : o.toFixed(2);
+    el.style.backgroundColor = glow > 0.01 ? mixRgb(st.rgb, palette.accent, glow) : '';
+    el.style.height = ((st.len + ext) * (1 + 0.5 * g.pulse)).toFixed(1) + 'px';
+    const w = 1 + 0.6 * g.pulse + 0.4 * glow;
+    el.style.width = w > 1.02 ? w.toFixed(2) + 'px' : '';
+    el.style.transform = 'translate(' + g.cx.toFixed(1) + 'px,' + g.cy.toFixed(1) + 'px) rotate(' + (delta * g.stepDeg).toFixed(3) + 'deg) translateY(' + (-(g.R + ext)).toFixed(1) + 'px) translateX(-50%)';
+  }
 
   function renderTicks(g) {
-    const fMin = Math.max(fStart, Math.ceil(((-g.half - 3) / g.stepDeg - s.pos) * FINE));
-    const fMax = Math.min(fEnd, Math.floor(((g.half + 3) / g.stepDeg - s.pos) * FINE));
-    const next = new Set();
-    for (let f = fMin; f <= fMax; f++) {
-      const el = tickEls[f - fStart];
-      const st = tickStyle(f, g);
-      if (el._cls !== st.cls) { el.className = st.cls; el._cls = st.cls; }
-      el.style.display = st.o < 0.02 ? 'none' : '';
-      if (st.o < 0.02) continue;
-      const glow = centerGlow(f, st);
-      const ext = st.ext + lerp(8, 16, g.e) * glow;
-      const o = Math.max(st.o, glow);
-      el.style.opacity = o > 0.99 ? '' : o.toFixed(2);
-      el.style.backgroundColor = glow > 0.01 ? mixRgb(st.rgb, palette.accent, glow) : '';
-      el.style.height = ((st.len + ext) * (1 + 0.5 * g.pulse)).toFixed(1) + 'px';
-      const w = 1 + 0.6 * g.pulse + 0.4 * glow;
-      el.style.width = w > 1.02 ? w.toFixed(2) + 'px' : '';
-      el.style.transform = 'translate(' + g.cx.toFixed(1) + 'px,' + g.cy.toFixed(1) + 'px) rotate(' + angleOf(f / FINE, g).toFixed(3) + 'deg) translateY(' + (-(g.R + ext)).toFixed(1) + 'px) translateX(-50%)';
-      next.add(f);
+    tickUsed = 0;
+    const span = (g.half + 3) / g.stepDeg; // 화면에 들어오는 칸 수(가운데에서 한쪽)
+    // 바탕 눈금: 칸마다 하나(늘 보임), 그 사이 가는 눈금(간격이 넓을 때만). 항목 자리는 건너뛴다.
+    const fLo = Math.ceil((-span - s.pos) * FINE);
+    const fHi = Math.floor((span - s.pos) * FINE);
+    const period = PERIOD * FINE;
+    const base = { cls: 'tick', rgb: palette.tick, len: lerp(8, 22, g.e), ext: 0, slot: null };
+    for (let f = fLo; f <= fHi; f++) {
+      if (itemFine.has(((f % period) + period) % period)) continue;
+      const onUnit = f % FINE === 0;
+      const o = onUnit ? Math.max(0.6, g.fineOpacity) : g.fineOpacity;
+      if (o < 0.02) continue;
+      base.o = o;
+      base.candidate = onUnit || s.finesVisible;
+      drawTick(f / FINE + s.pos, base, g);
     }
-    s.shown.forEach((f) => { if (!next.has(f)) tickEls[f - fStart].style.display = 'none'; });
-    s.shown = next;
+    // 항목 눈금: 한 바퀴가 화면보다 짧아지면(멀리 이동 중) 양쪽 반복분도 그린다.
+    slots.forEach((_, i) => {
+      const d0 = deltaOf(i);
+      const st = itemStyle(i, g);
+      st.candidate = true;
+      for (let c = -1; c <= 1; c++) {
+        const d = d0 + c * PERIOD;
+        if (Math.abs(d) <= span) drawTick(d, st, g);
+      }
+    });
+    for (let i = tickUsed; i < tickPool.length; i++) tickPool[i].style.display = 'none';
   }
 
   // ── 그리기: 라벨(겹치면 우선순위 낮은 쪽을 숨긴다) ────────────────
@@ -331,7 +348,7 @@
     const candidates = [];
     labels.forEach((lb) => {
       const slot = slots[lb.slot];
-      const a = angleOf(lb.slot, g);
+      const a = deltaOf(lb.slot) * g.stepDeg;
       if (Math.abs(a) > g.half + 2) { hideLabel(lb, true); return; }
       const ar = rad(a);
       const isGroup = slot.kind !== 'post';
@@ -380,12 +397,10 @@
 
   function render() {
     const g = geom();
-    // 빨간 눈금 = 지금 가운데(12시)에 가장 가까운, 화면에 보이는 눈금. 휠이 돌면 빨강이 눈금을 타고 흐른다.
-    // 가는 눈금이 숨어 있는 단계(간격이 좁을 때)에는 칸 눈금만 후보로 삼아 없는 자리에 빨강이 생기지 않게 한다.
-    s.finesVisible = (g.slotPx / FINE - 6) / 10 >= 0.3;
-    s.centerFloat = -s.pos * FINE;
-    s.centerF = s.finesVisible ? Math.round(s.centerFloat) : Math.round(-s.pos) * FINE;
-    s.centerSlot = s.centerF % FINE === 0 ? s.centerF / FINE : -1;
+    s.finesVisible = g.fineOpacity >= 0.3;
+    // 가운데에 걸린 항목: 가장 가까운 눈금 간격의 절반 안에 있을 때만.
+    const near = nearestItem();
+    s.centerSlot = near.dist <= (s.finesVisible ? 0.5 / FINE : 0.5) ? near.slot : -1;
     s.centerIsTarget = s.centerSlot >= 0 && targetSet[s.level].has(s.centerSlot);
     renderTicks(g);
     renderLabels(g);
@@ -421,8 +436,8 @@
       active = stepFlight(now) || active;
     } else if (s.arm && !s.drag && !s.wheelTimer) {
       // 섬세하게 멈춘 다른 단계 항목: 정확히 가운데로 붙으며 차오르고, 다 차면 그 항목으로 간다.
-      const d = -s.arm.slot - s.pos;
-      s.pos = Math.abs(d) < 0.002 ? -s.arm.slot : s.pos + d * (1 - Math.pow(1 - SNAP, k));
+      const d = -deltaOf(s.arm.slot);
+      s.pos += Math.abs(d) < 0.002 ? d : d * (1 - Math.pow(1 - SNAP, k));
       s.armP = clamp((now - s.arm.start) / ARM_MS, 0, 1);
       if (s.armP >= 1) {
         const slot = s.arm.slot;
@@ -432,9 +447,7 @@
       }
       active = true;
     } else if (!s.drag && !s.wheelTimer) {
-      const b = bounds();
-      const outside = s.pos > b.max + 0.001 || s.pos < b.min - 0.001;
-      if (Math.abs(s.vel) > 0.004 && !outside && !reduceMotion) {
+      if (Math.abs(s.vel) > 0.004 && !reduceMotion) {
         s.pos += s.vel * k;
         s.vel *= Math.pow(FRICTION, k);
         active = true;
@@ -442,8 +455,10 @@
         s.vel = 0;
         if (s.rotTarget == null) {
           const t = nearestTarget(s.level);
-          if (Math.abs(t + s.pos) > 0.001) { s.aim = t; s.rotTarget = -t; }
-          else if (t !== s.cur) setCurrent(t);
+          if (t != null) {
+            if (Math.abs(deltaOf(t)) > 0.001) { s.aim = t; s.rotTarget = s.pos - deltaOf(t); }
+            else if (t !== s.cur) setCurrent(t);
+          }
         }
         if (s.rotTarget != null) {
           const d = s.rotTarget - s.pos;
@@ -464,33 +479,31 @@
     if (active) s.raf = requestAnimationFrame(frame);
   }
 
-  // 모든 '이동'은 한 번의 비행이다: 돌면서 동시에 확대·축소한다.
+  // 모든 '이동'은 한 번의 비행이다: 원 위에서 가까운 쪽으로 돌면서 동시에 확대·축소한다.
   // - 단계가 바뀌면(안으로·밖으로) 0 ↔ 1로 확대·축소하고,
   // - 같은 단계에서 멀리 가면 가는 동안 원이 잠깐 물러났다(축소) 도착하며 다시 다가온다(확대).
-  //   그래서 카테고리와 카테고리, 글과 글 사이가 하나의 원으로 이어져 보인다.
-  // - 바로 옆 칸은 물러나지 않고 돌기만 한다.
+  //   글 단계는 다른 카테고리의 글로 넘어갈 때, 홈·카테고리 단계는 두 칸 이상 건너뛸 때만. 가까운 이동은 돌기만 한다.
   // 아래 내용은 비행 한가운데에서 바뀐다(흐려졌다가 도착하며 또렷해진다).
   function flyTo(slot, level) {
     const fromPos = s.pos;
-    const toPos = -slot;
+    const toPos = s.pos - deltaOf(slot);
     const fromZ = s.z;
     const toZ = level;
     const dist = Math.abs(toPos - fromPos);
     const levelChange = Math.abs(toZ - fromZ) > 0.5;
-    // 물러나는(축소) 건 멀리 갈 때만: 글 단계는 다른 카테고리의 글로 넘어갈 때,
-    // 홈·카테고리 단계는 두 칸 이상 건너뛸 때. 가까운 이동은 돌기만 한다.
     let dip = 0;
     if (!levelChange) {
-      const fromSlot = clamp(Math.round(-fromPos), 0, slots.length - 1);
       if (level === 1) {
-        if (catIndexOf[fromSlot] !== catIndexOf[slot]) dip = clamp((dist - 1.5) / 8, 0.15, 0.55);
+        if (slots[nearestItem().slot].catIndex !== slots[slot].catIndex) dip = clamp(0.15 + dist / 40, 0.15, 0.55);
       } else {
         const list = targets[0];
-        const steps = Math.abs(list.indexOf(slot) - list.indexOf(nearestTarget(0)));
+        const di = Math.abs(list.indexOf(slot) - list.indexOf(nearestTarget(0)));
+        const steps = Math.min(di, list.length - di);
         if (steps >= 2) dip = clamp(steps * 0.12, 0, 0.45);
       }
     }
-    const dur = levelChange ? ZOOM_MS : Math.min(FLIGHT_MS[2], FLIGHT_MS[0] + Math.min(dist, 30) * FLIGHT_MS[1] + dip * 300);
+    const distPx = dist * geom().unitPx;
+    const dur = levelChange ? ZOOM_MS : Math.min(FLIGHT_MS[2], FLIGHT_MS[0] + distPx * FLIGHT_MS[1] + dip * 300);
     s.level = level;
     s.aim = slot;
     s.vel = 0;
@@ -551,11 +564,11 @@
   // 가운데가 다른 단계의 항목 눈금 위에 정확히 멈췄으면 차오르기 시작한다.
   // 0단계에선 글 눈금(→ 그 글로 들어간다), 1단계에선 카테고리 눈금(→ 그 카테고리로 나간다).
   function tryArm() {
-    const slot = Math.round(-s.pos);
-    if (slot < 0 || slot >= slots.length || Math.abs(slot + s.pos) > PRECISE_SLOT) return false;
-    const kind = slots[slot].kind;
+    const near = nearestItem();
+    if (near.dist * geom().unitPx > PRECISE_PX) return false;
+    const kind = slots[near.slot].kind;
     if (!(s.level === 0 && kind === 'post') && !(s.level === 1 && kind === 'cat')) return false;
-    s.arm = { slot: slot, start: performance.now() };
+    s.arm = { slot: near.slot, start: performance.now() };
     s.armP = 0;
     s.vel = 0;
     s.rotTarget = null;
@@ -594,10 +607,12 @@
     if (s.cur !== HOME) rotateTo(HOME);
   }
 
+  // 옆 항목으로. 원이라 끝에서 처음으로 이어진다(취향 다음 = 홈).
   function step(dir) {
     const list = targets[s.level];
+    if (!list.length) return;
     const from = s.aim >= 0 ? s.aim : (list.indexOf(s.cur) >= 0 ? s.cur : nearestTarget(s.level));
-    const i = clamp(list.indexOf(from) + dir, 0, list.length - 1);
+    const i = (list.indexOf(from) + dir + list.length) % list.length;
     rotateTo(list[i]);
   }
 
@@ -642,7 +657,7 @@
     }
   }
 
-  // 브라우저 뒤로/앞으로 가기: 화면의 세 동작과 같은 움직임으로 그 칸에 간다.
+  // 브라우저 뒤로/앞으로 가기: 화면의 세 동작과 같은 움직임으로 그 항목에 간다.
   function followHistory(slot) {
     if (slot === s.cur && s.aim < 0) return;
     s.historyLock = slot;
@@ -674,6 +689,9 @@
       target = depthOf(here) === 2 ? catSlot[slots[here].cat] : HOME;
       if (depthOf(target) > e.state.depth) history.pushState(stateFor(target, true), '', hashFor(target));
       else if (hashFor(target) !== location.hash) history.replaceState(stateFor(target, e.state.pushed), '', hashFor(target));
+    } else if (hashFor(target) !== location.hash) {
+      // 없는 글·카테고리 주소(지운 글의 옛 링크 등)는 실제로 간 자리의 주소로 고쳐 둔다.
+      history.replaceState(stateFor(target, e.state ? e.state.pushed : false), '', hashFor(target));
     }
     followHistory(target);
   });
@@ -715,10 +733,22 @@
     return li;
   }
 
+  // 글이 하나도 없을 때(첫 배포, 빈 카테고리) 목록 자리에 남기는 한 줄.
+  function emptyRow() {
+    const li = document.createElement('li');
+    li.className = 'rows-empty';
+    li.textContent = '아직 글이 없어요';
+    return li;
+  }
+
+  function fillRows(el, slotList) {
+    el.replaceChildren.apply(el, slotList.length ? slotList.map(rowFor) : [emptyRow()]);
+  }
+
   function fillCat(cat) {
     const list = postsOf(cat);
     catTitle.textContent = cat + ' — ' + String(list.length).padStart(2, '0');
-    catRows.replaceChildren.apply(catRows, list.map(rowFor));
+    fillRows(catRows, list);
   }
 
   function fillPost(slot) {
@@ -764,12 +794,10 @@
       try { wheel.setPointerCapture(e.pointerId); } catch (err) { /* 캡처 미지원 브라우저는 그냥 진행 */ }
     }
     const g = geom();
-    let delta = (e.clientX - d.x) / g.slotPx;
-    const b = bounds();
-    if ((s.pos > b.max && delta > 0) || (s.pos < b.min && delta < 0)) delta *= EDGE_RESIST;
+    const delta = (e.clientX - d.x) / g.unitPx; // 원이라 끝이 없다: 저항 없이 계속 돈다
     s.pos += delta;
     d.x = e.clientX;
-    d.samples.push({ t: e.timeStamp, d: delta });
+    d.samples.push({ t: e.timeStamp, d: delta, px: Math.abs(delta) * g.unitPx });
     if (d.samples.length > 8) d.samples.shift();
     s.hover = { x: e.clientX, y: e.clientY };
     render();
@@ -786,11 +814,11 @@
       if (recentMoves.length > 1) {
         const span = Math.max(1, recentMoves[recentMoves.length - 1].t - recentMoves[0].t);
         const sum = recentMoves.slice(1).reduce((acc, q) => acc + q.d, 0);
-        s.vel = clamp(sum / span * (1000 / 60), -1.2, 1.2);
+        const maxVel = 30 / geom().unitPx; // 프레임당 최대 30px
+        s.vel = clamp(sum / span * (1000 / 60), -maxVel, maxVel);
       }
       // 천천히 끌어 다른 단계의 눈금에 정확히 맞췄으면 관성 대신 차오르기.
-      const slotPx = geom().slotPx;
-      if (wasCareful(d.samples.map((q) => ({ t: q.t, px: Math.abs(q.d) * slotPx })), e.timeStamp)) tryArm();
+      if (wasCareful(d.samples, e.timeStamp)) tryArm();
       // 끌기 끝에 따라오는 click이 라벨을 누르지 않게 한 번 막는다.
       s.justDragged = true;
       setTimeout(() => { s.justDragged = false; }, 0);
@@ -798,9 +826,9 @@
       // 끌지 않고 호 위를 눌렀으면, 누른 자리에서 가까운 같은 단계 항목으로 돈다.
       const g = geom();
       const a = deg(Math.asin(clamp((e.clientX - g.cx) / g.R, -1, 1)));
-      const slotF = a / g.stepDeg - s.pos;
-      let best = -1, bd = s.level === 1 ? 0.6 : 2;
-      targets[s.level].forEach((i) => { const dd = Math.abs(i - slotF); if (dd < bd) { bd = dd; best = i; } });
+      const at = a / g.stepDeg; // 누른 자리(가운데 기준 칸)
+      let best = -1, bd = 32 / g.unitPx;
+      targets[s.level].forEach((i) => { const dd = Math.abs(deltaOf(i) - at); if (dd < bd) { bd = dd; best = i; } });
       if (best >= 0) press(best);
     }
     kick();
@@ -835,11 +863,7 @@
     }
     if (s.raf != null) { cancelAnimationFrame(s.raf); s.raf = null; }
     cancelFlight();
-    const g = geom();
-    let d = -delta / g.slotPx;
-    const b = bounds();
-    if ((s.pos > b.max && d > 0) || (s.pos < b.min && d < 0)) d *= EDGE_RESIST;
-    s.pos += d;
+    s.pos -= delta / geom().unitPx;
     s.vel = 0;
     s.rotTarget = null;
     s.aim = -1;
@@ -882,14 +906,14 @@
   window.addEventListener('scroll', applyScrollBlur, { passive: true });
   window.addEventListener('resize', render);
 
-  recentEl.replaceChildren.apply(recentEl, recent.slice(0, 5).map(rowFor));
+  fillRows(recentEl, recent.slice(0, 5));
   measureLabels();
   // 주소로 바로 들어와도(새로고침·공유 링크) 그 자리에서 시작한다.
   const start = slotFromHash();
   history.replaceState(stateFor(start, false), '', hashFor(start));
   if (start !== HOME) {
     if (slots[start].kind === 'post') { s.level = 1; s.z = 1; }
-    s.pos = -start;
+    s.pos = -slots[start].u;
     setCurrent(start, true);
   } else {
     updateHub();

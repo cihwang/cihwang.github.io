@@ -505,3 +505,4 @@ dialog.help::backdrop { background: rgba(20, 22, 19, 0.35); backdrop-filter: blu
 @media (prefers-reduced-motion: reduce) {
   dialog.help[open] { animation: none; }
 }
+.rows-empty { padding: 7px 0; font-size: 14px; color: var(--muted); }
