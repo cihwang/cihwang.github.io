@@ -1,7 +1,7 @@
 // 쓰기 화면(`#/new`, `#/edit?repo=…&path=…`): 제목·카테고리·서식·본문, 미리보기, 기기 자동 저장, 임시저장.
-// 사진 올리기·출간 설정·충돌·삭제·도움말은 각자 파일에 두고, 이 화면은 그들에게 글(doc)과 저장 함수를 건넨다.
-import { renderMarkdown } from '../markdown.js';
-import { SITE_URL, AUTOSAVE_MS } from './config.js';
+// 글 열기(doc-open.js)·미리보기(preview.js)·사진 올리기·출간 설정·충돌·삭제·도움말은 각자 파일에 두고,
+// 이 화면은 그들에게 글(doc)과 저장 함수를 건넨다.
+import { AUTOSAVE_MS } from './config.js';
 import { AuthError, ConflictError } from './github.js';
 import { applyFormat } from './format.js';
 import { $, local, editHash, failText, mount, addNotice, fetchLive, categoryPills, followRenderedLink, CONFLICT_TEXT } from './ui.js';
@@ -10,13 +10,13 @@ import { createPublishDialog } from './publish-dialog.js';
 import { isSaveConflict, resolveSaveConflict } from './conflict-dialog.js';
 import { deleteOpenDoc } from './delete-dialog.js';
 import { createHelpDialog } from './help-dialog.js';
+import { createPreview } from './preview.js';
+import { snapshot, loadDoc, chooseDoc } from './doc-open.js';
 
 const PREVIEW_MS = 150;
 const LOCAL_LOST = '이 기기에도 저장하지 못했어요. 창을 닫거나 나가면 이 내용이 사라져요.';
 const pad = (n) => String(n).padStart(2, '0');
 const clockText = (date) => `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-/** 머리말 키 순서와 상관없이 같은 내용이면 같은 문자열. GitHub에 올라간 내용과 비교하는 데 쓴다. */
-const snapshot = (meta, body) => JSON.stringify([Object.entries(meta).sort(), body]);
 
 /** 화면 키보드가 가린 높이를 `--kb-offset`에 넣는다. 폰에서 서식 줄·아래 막대를 키보드 바로 위에 붙이는 데 쓴다. */
 function trackKeyboard() {
@@ -32,13 +32,6 @@ function trackKeyboard() {
     vv.removeEventListener('scroll', update);
     style.removeProperty('--kb-offset');
   };
-}
-
-/** 기기 저장본에서 Doc 칸만 꺼낸다. 모양이 깨졌으면 null. */
-function docFromSaved(saved) {
-  if (!saved || typeof saved.body !== 'string' || typeof saved.meta !== 'object' || !saved.meta) return null;
-  const { meta, body, draftPath = null, draftSha = null, blogPath = null, blogSha = null } = saved;
-  return { meta: { ...meta }, body, draftPath, draftSha, blogPath, blogSha };
 }
 
 /**
@@ -66,8 +59,7 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
   let saving = false;
   let autosaveTimer = 0;
   let previewTimer = 0;
-  // 'media/…' → blob URL | null(초안 저장소에 없음 → 사이트 주소) | 'pending'
-  const media = new Map();
+  const preview = createPreview({ titleEl: el['preview-title'], bodyEl: el['preview-body'], gh, draftsRepo, getDoc: () => doc, isCurrent });
   const cleanups = [trackKeyboard()];
   const listen = (target, type, fn) => {
     target.addEventListener(type, fn);
@@ -139,37 +131,9 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
     previewTimer = setTimeout(renderPreview, PREVIEW_MS);
   }
 
-  async function fetchMedia(path) {
-    media.set(path, 'pending');
-    let url = null;
-    try {
-      const blob = await gh.getRaw(draftsRepo, path);
-      url = blob && URL.createObjectURL(blob);
-    } catch {
-      // 미리보기만의 일이다. 초안 저장소에서 못 받으면 사이트 주소로 보여 주고, 인증·저장 오류는 저장할 때 알린다.
-    }
-    if (!isCurrent()) {
-      if (url) URL.revokeObjectURL(url);
-      return;
-    }
-    media.set(path, url);
-    renderPreview();
-  }
-
   function renderPreview() {
     clearTimeout(previewTimer);
-    el['preview-title'].textContent = doc.meta.title ?? '';
-    const tpl = document.createElement('template');
-    tpl.innerHTML = renderMarkdown(doc.body);
-    // 초안 저장소는 비공개라 주소로는 못 받는다. 토큰으로 받은 blob으로 바꾸고, 없으면 사이트에 이미 있는 사진으로 본다.
-    for (const node of tpl.content.querySelectorAll('img[src^="media/"], video[src^="media/"]')) {
-      const path = node.getAttribute('src');
-      const url = media.get(path);
-      if (url === undefined) fetchMedia(path);
-      if (url === undefined || url === 'pending') node.removeAttribute('src');
-      else node.src = url ?? SITE_URL + path;
-    }
-    el['preview-body'].replaceChildren(tpl.content);
+    preview.render();
   }
 
   function format(kind) {
@@ -273,7 +237,7 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
       upload: (blob, fileName, rand) => store.uploadMedia(blob, fileName, rand),
       onBodyChange: () => { doc.body = el.body.value; changed(); },
       // 방금 올린 사진은 초안 저장소에서 다시 받지 않고 가진 것으로 미리 보인다.
-      onUploaded: (path, blob) => { if (!media.has(path)) media.set(path, URL.createObjectURL(blob)); },
+      onUploaded: preview.remember,
       status: setStatus,
       report: (text) => addNotice(root, text),
       onAuthLost: loseLoginSaved,
@@ -371,50 +335,6 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
     }
   });
 
-  /** 주소에 맞는 글을 연다. `{ remote, saved, blank }`: GitHub 내용(새 글이면 null), 기기 저장본, 새 글의 빈 Doc. */
-  async function loadDoc() {
-    if (name === 'new') {
-      key = params.get('local');
-      if (!key) {
-        // 새로고침·로그인 풀림 뒤에도 같은 기기 저장본으로 돌아오게 키를 주소에 남긴다.
-        key = `new:${crypto.randomUUID().slice(0, 8)}`;
-        history.replaceState(null, '', `#/new?local=${encodeURIComponent(key)}`);
-      }
-      return { remote: null, saved: docFromSaved(local.load(key)), blank: store.newDoc('') };
-    }
-    const repo = params.get('repo') === 'blog' ? 'blog' : 'drafts';
-    const path = params.get('path') ?? '';
-    // 빈 경로로 Contents API를 부르면 저장소 맨 위 폴더 목록이 와서 글처럼 열린다.
-    if (!path.endsWith('.md')) throw new Error(`글 파일 주소가 아니에요. (${path || '빈 주소'})`);
-    const remote = await store.open({ repo, path });
-    key = remote.draftPath ?? remote.blogPath;
-    return { remote, saved: local.load(key) };
-  }
-
-  /**
-   * GitHub 내용과 기기 저장본 중 어느 쪽으로 이어 쓸지 정한다. 기기에 올리지 않은 다른 내용이 있을 때만 묻는다.
-   * @returns {Promise<{ doc: object, dropLocal: boolean }>} `dropLocal`: GitHub 쪽을 골라 기기 저장본을 덮어야 함
-   */
-  async function chooseDoc(remote, saved) {
-    const savedDoc = docFromSaved(saved);
-    const unsynced = savedDoc && (saved.savedAt ?? '') > (saved.remoteSavedAt ?? '')
-      && snapshot(savedDoc.meta, savedDoc.body) !== snapshot(remote.meta, remote.body);
-    if (!unsynced) return { doc: remote, dropLocal: false };
-    const when = saved.savedAt ? ` (${new Date(saved.savedAt).toLocaleString('ko-KR')} 저장)` : '';
-    const moved = savedDoc.draftSha !== remote.draftSha || savedDoc.blogSha !== remote.blogSha;
-    const choice = await ask(
-      `이 기기에 더 최근 내용이 있어요${when}. ${moved ? 'GitHub 쪽도 그 뒤에 다른 곳에서 바뀌었어요. ' : ''}`
-        + '어느 쪽으로 이어 쓸까요? GitHub 내용을 고르면 이 기기 내용은 지워져요.',
-      // 지우지 않는 쪽이 먼저(초점·Enter가 그쪽으로 간다).
-      [{ label: '이 기기 내용', value: 'local', primary: true }, { label: 'GitHub 내용', value: 'remote' }],
-    );
-    if (choice === 'remote') return { doc: remote, dropLocal: true };
-    // 창을 그냥 닫아도 지우지 않는 쪽(기기 내용)으로 간다. GitHub가 그 뒤에 바뀌었으면 기기 저장본이 알던 sha를 그대로 둬서,
-    // 다음 저장이 다른 기기의 커밋을 덮지 않고 ConflictError가 나게 한다.
-    const shas = moved ? { draftSha: savedDoc.draftSha, blogSha: savedDoc.blogSha } : {};
-    return { doc: { ...remote, meta: savedDoc.meta, body: savedDoc.body, ...shas }, dropLocal: false };
-  }
-
   function showLoadError(message) {
     $(mount('load-error'), 'message').textContent = `글을 불러오지 못했어요. ${message}`;
   }
@@ -422,12 +342,13 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
   (async () => {
     setStatus('불러오는 중…');
     // 카테고리는 다른 기기에서 바뀌었을 수 있어 화면을 열 때마다 site.json을 새로 읽는다.
-    const [site, live, opened] = await Promise.allSettled([store.getSite(), fetchLive(), loadDoc()]);
+    const [site, live, opened] = await Promise.allSettled([store.getSite(), fetchLive(), loadDoc({ name, params, store })]);
     if (!isCurrent()) return;
     if ([site, live, opened].some((r) => r.status === 'rejected' && r.reason instanceof AuthError)) return loseLogin();
     if (opened.status === 'rejected') return showLoadError(opened.reason.message);
     const { remote, saved, blank } = opened.value;
-    const picked = remote ? await chooseDoc(remote, saved) : { doc: saved ?? blank, dropLocal: false };
+    key = opened.value.key;
+    const picked = remote ? await chooseDoc(remote, saved, ask) : { doc: saved ?? blank, dropLocal: false };
     if (!isCurrent()) return;
     doc = picked.doc;
     const base = remote ?? blank;
@@ -460,6 +381,6 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
     clearTimeout(autosaveTimer);
     clearTimeout(previewTimer);
     for (const off of cleanups) off();
-    for (const url of media.values()) if (url && url !== 'pending') URL.revokeObjectURL(url);
+    preview.revokeAll();
   };
 }
