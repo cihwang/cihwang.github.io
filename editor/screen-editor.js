@@ -3,7 +3,7 @@ import { renderMarkdown } from '../markdown.js';
 import { SITE_URL, AUTOSAVE_MS } from './config.js';
 import { AuthError, ConflictError } from './github.js';
 import { applyFormat } from './format.js';
-import { $, local, editHash, failText, mount, addNotice, fetchLive } from './ui.js';
+import { $, local, editHash, failText, mount, addNotice, fetchLive, categoryPills, followRenderedLink } from './ui.js';
 
 const PREVIEW_MS = 150;
 const LOCAL_LOST = '이 기기에도 저장하지 못했어요. 창을 닫거나 나가면 이 내용이 사라져요.';
@@ -200,15 +200,7 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin })
   }
 
   function renderCats(categories) {
-    el.cats.replaceChildren(...categories.map((c) => {
-      const label = document.createElement('label');
-      label.className = 'ed-pill';
-      const input = Object.assign(document.createElement('input'), { type: 'radio', name: 'category', value: c, checked: c === doc.meta.category });
-      const text = document.createElement('span');
-      text.textContent = c;
-      label.append(input, text);
-      return label;
-    }));
+    el.cats.replaceChildren(...categoryPills('category', categories, doc.meta.category));
   }
 
   function wire() {
@@ -252,24 +244,7 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin })
       });
     }
     // 미리보기 안 링크: 각주·제목(#…)은 미리보기 안에서 움직이고, 바깥 링크는 새 탭으로. 이 페이지 주소(#/…)는 바꾸지 않는다.
-    listen(el['preview-body'], 'click', (e) => {
-      const link = e.target.closest('a[href]');
-      if (!link) return;
-      e.preventDefault();
-      const href = link.getAttribute('href');
-      if (href.startsWith('#')) {
-        let target = href.slice(1);
-        try {
-          target = decodeURIComponent(target);
-        } catch {
-          // 깨진 %인코딩이면 적힌 그대로의 id를 찾는다.
-        }
-        el['preview-body'].querySelector(`[id="${CSS.escape(target)}"]`)?.scrollIntoView();
-      } else if (link.protocol === 'http:' || link.protocol === 'https:') {
-        // 토큰이 있는 페이지라 javascript: 같은 다른 주소는 열지 않는다.
-        window.open(link.href, '_blank', 'noopener');
-      }
-    });
+    listen(el['preview-body'], 'click', (e) => followRenderedLink(el['preview-body'], e));
     listen(window, 'beforeunload', (e) => {
       if (localPending) saveLocal();
       if (!dirty()) return;

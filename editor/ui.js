@@ -33,6 +33,50 @@ export function mount(name) {
   return node;
 }
 
+/**
+ * 카테고리 알약(라디오 묶음)을 만든다. 라디오는 알약 위에 투명하게 덮여 누르기·방향키·초점을 기본 라디오 그대로 쓴다.
+ * @param {string} name 라디오 묶음 이름. 한 화면에 묶음이 둘이면 서로 달라야 한다.
+ * @param {string[]} categories 휠 순서의 카테고리 이름
+ * @param {string|undefined} checked 골라 둘 이름. 목록에 없으면 아무것도 고르지 않는다.
+ * @returns {HTMLLabelElement[]} `.ed-pill` 라벨들(이름은 textContent로 넣는다)
+ */
+export function categoryPills(name, categories, checked) {
+  return categories.map((c) => {
+    const label = document.createElement('label');
+    label.className = 'ed-pill';
+    const input = Object.assign(document.createElement('input'), { type: 'radio', name, value: c, checked: c === checked });
+    const text = document.createElement('span');
+    text.textContent = c;
+    label.append(input, text);
+    return label;
+  });
+}
+
+/**
+ * `renderMarkdown`으로 그린 칸(미리보기·도움말) 안 링크의 click을 처리한다.
+ * 각주·제목(`#…`)은 그 칸 안에서 움직이고, http(s) 주소는 새 탭으로 연다. 이 페이지 주소(`#/…`)는 바꾸지 않는다.
+ * @param {HTMLElement} container 링크를 담은 칸. `#…`의 대상도 이 안에서만 찾는다.
+ * @param {MouseEvent} e 그 칸의 click 이벤트. 링크를 누른 것이면 기본 동작을 막는다.
+ */
+export function followRenderedLink(container, e) {
+  const link = e.target.closest('a[href]');
+  if (!link) return;
+  e.preventDefault();
+  const href = link.getAttribute('href');
+  if (href.startsWith('#')) {
+    let target = href.slice(1);
+    try {
+      target = decodeURIComponent(target);
+    } catch {
+      // 깨진 %인코딩이면 적힌 그대로의 id를 찾는다.
+    }
+    container.querySelector(`[id="${CSS.escape(target)}"]`)?.scrollIntoView();
+  } else if (link.protocol === 'http:' || link.protocol === 'https:') {
+    // 토큰이 있는 페이지라 javascript: 같은 다른 주소는 열지 않는다.
+    window.open(link.href, '_blank', 'noopener');
+  }
+}
+
 /** 화면의 `[data-role="notices"]`에 안내 한 줄을 더한다(그 칸은 role="alert"라 읽어 준다). */
 export function addNotice(root, text) {
   const p = document.createElement('p');
