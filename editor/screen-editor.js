@@ -1,11 +1,12 @@
 // 쓰기 화면(`#/new`, `#/edit?repo=…&path=…`): 제목·카테고리·서식·본문, 미리보기, 기기 자동 저장, 임시저장.
 import { renderMarkdown } from '../markdown.js';
 import { SITE_URL, AUTOSAVE_MS } from './config.js';
-import { AuthError } from './github.js';
+import { AuthError, ConflictError } from './github.js';
 import { applyFormat } from './format.js';
 import { $, local, editHash, failText, mount, addNotice, fetchLive } from './ui.js';
 
 const PREVIEW_MS = 150;
+const LOCAL_LOST = '이 기기에도 저장하지 못했어요. 창을 닫거나 나가면 이 내용이 사라져요.';
 const pad = (n) => String(n).padStart(2, '0');
 const clockText = (date) => `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 /** 머리말 키 순서와 상관없이 같은 내용이면 같은 문자열. GitHub에 올라간 내용과 비교하는 데 쓴다. */
@@ -52,6 +53,7 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin })
   let synced = '';         // GitHub에 있는 내용의 snapshot. 지금 내용과 다르면 올리지 않은 변경이 있다.
   let lastSync = null;     // 마지막으로 GitHub 내용과 같았던 시각(ISO). 새 글은 null.
   let localPending = false; // 마지막 기기 저장 뒤 바뀐 것이 있다
+  let localFailed = false;  // 마지막 기기 저장이 실패했다. 이때는 "이 기기에 남겨 뒀어요"라고 말하지 않는다.
   let saving = false;
   let autosaveTimer = 0;
   let previewTimer = 0;
@@ -68,6 +70,9 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin })
   const barSize = new ResizeObserver(() => root.style.setProperty('--bar-h', `${el.bar.offsetHeight}px`));
   barSize.observe(el.bar);
   cleanups.push(() => barSize.disconnect());
+  // 불러오는 동안 친 글은 입력 이벤트를 받기 전이라 불러온 내용에 덮인다. 다 불러올 때까지 막아 둔다.
+  el.title.readOnly = true;
+  el.body.readOnly = true;
 
   /** 지금 내용을 기기에 저장한다. 실패하면 상태 글에 이유를 쓰고 false. */
   function saveLocal() {
@@ -77,8 +82,10 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin })
     try {
       local.save(key, { ...doc, savedAt: now, remoteSavedAt: dirty() ? lastSync : now });
       localPending = false;
+      localFailed = false;
       return true;
     } catch (e) {
+      localFailed = true;
       setStatus(`저장 실패: ${e.message}`);
       return false;
     }
@@ -155,7 +162,7 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin })
     saving = true;
     // GitHub가 실패해도 쓰던 내용이 남도록 기기에 먼저 저장한다.
     saveLocal();
-    setStatus('저장하는 중…');
+    setStatus(localFailed ? '저장하는 중… (이 기기에는 저장하지 못했어요)' : '저장하는 중…');
     const sent = { ...doc, meta: { ...doc.meta } };
     try {
       const saved = await store.saveDraft(sent);
@@ -166,14 +173,17 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin })
       lastSync = new Date().toISOString();
       if (key !== saved.draftPath) moveKey(saved.draftPath);
       saveLocal();
-      setStatus(`저장됨 · ${clockText(new Date())}${dirty() ? ' (그 뒤 고친 내용은 이 기기에만 있어요)' : ''}`);
+      const later = localFailed ? ' (그 뒤 고친 내용은 아직 어디에도 저장되지 않았어요)' : ' (그 뒤 고친 내용은 이 기기에만 있어요)';
+      setStatus(`저장됨 · ${clockText(new Date())}${dirty() ? later : ''}`);
     } catch (e) {
       if (e instanceof AuthError) {
         saveLocal();
         if (isCurrent()) loseLogin();
         return;
       }
-      setStatus(`저장 실패: ${failText(e)}`);
+      // 기기 저장도 실패했으면 충돌 안내의 "이 기기 내용은 남겨 뒀어요"는 거짓이 된다.
+      const reason = e instanceof ConflictError && localFailed ? '다른 기기에서 먼저 저장했어요. 덮어쓰지 않았어요.' : failText(e);
+      setStatus(`저장 실패: ${reason}${localFailed ? ` ${LOCAL_LOST}` : ''}`);
     } finally {
       saving = false;
     }
@@ -222,7 +232,12 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin })
     listen(el.publish, 'click', () => setStatus('출간은 아직 준비 중이에요. 지금은 임시저장만 할 수 있어요.'));
     listen(el.exit, 'click', async () => {
       if (dirty()) {
-        const choice = await ask('GitHub에 올리지 않은 변경이 있어요. 이 기기에는 남겨 둘게요. 나갈까요?', [
+        // 묻는 문장이 맞도록 먼저 기기에 저장해 본다.
+        if (localPending) saveLocal();
+        const question = localFailed
+          ? `GitHub에 올리지 않은 변경이 있어요. ${LOCAL_LOST} 나갈까요?`
+          : 'GitHub에 올리지 않은 변경이 있어요. 이 기기에는 남겨 둘게요. 나갈까요?';
+        const choice = await ask(question, [
           { label: '계속 쓰기', value: '' },
           { label: '나가기', value: 'leave', primary: true },
         ]);
@@ -242,8 +257,18 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin })
       if (!link) return;
       e.preventDefault();
       const href = link.getAttribute('href');
-      if (href.startsWith('#')) el['preview-body'].querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`)?.scrollIntoView();
-      else window.open(link.href, '_blank', 'noopener');
+      if (href.startsWith('#')) {
+        let target = href.slice(1);
+        try {
+          target = decodeURIComponent(target);
+        } catch {
+          // 깨진 %인코딩이면 적힌 그대로의 id를 찾는다.
+        }
+        el['preview-body'].querySelector(`[id="${CSS.escape(target)}"]`)?.scrollIntoView();
+      } else if (link.protocol === 'http:' || link.protocol === 'https:') {
+        // 토큰이 있는 페이지라 javascript: 같은 다른 주소는 열지 않는다.
+        window.open(link.href, '_blank', 'noopener');
+      }
     });
     listen(window, 'beforeunload', (e) => {
       if (localPending) saveLocal();
@@ -259,15 +284,15 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin })
   }
 
   // Ctrl/Cmd+S는 불러오는 중에도 브라우저 "페이지 저장"이 뜨지 않게 바로 막는다.
+  // 한글 입력 중에는 e.key가 'ㄴ'·'ㅠ'·'ㅑ'가 되므로 글쇠 자리(e.code)로 본다. 조합 중에는 동작만 건너뛴다.
   listen(document, 'keydown', (e) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-    const k = e.key.toLowerCase();
-    if (k === 's') {
+    if (e.code === 'KeyS') {
       e.preventDefault();
-      saveRemote();
-    } else if ((k === 'b' || k === 'i') && doc && document.activeElement === el.body) {
+      if (!e.isComposing) saveRemote();
+    } else if ((e.code === 'KeyB' || e.code === 'KeyI') && !e.isComposing && doc && document.activeElement === el.body) {
       e.preventDefault();
-      format(k === 'b' ? 'bold' : 'italic');
+      format(e.code === 'KeyB' ? 'bold' : 'italic');
     }
   });
 
@@ -305,12 +330,14 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin })
     const choice = await ask(
       `이 기기에 더 최근 내용이 있어요${when}. ${moved ? 'GitHub 쪽도 그 뒤에 다른 곳에서 바뀌었어요. ' : ''}`
         + '어느 쪽으로 이어 쓸까요? GitHub 내용을 고르면 이 기기 내용은 지워져요.',
-      [{ label: 'GitHub 내용', value: 'remote' }, { label: '이 기기 내용', value: 'local', primary: true }],
+      // 지우지 않는 쪽이 먼저(초점·Enter가 그쪽으로 간다).
+      [{ label: '이 기기 내용', value: 'local', primary: true }, { label: 'GitHub 내용', value: 'remote' }],
     );
-    // 창을 그냥 닫으면 지우지 않는 쪽(기기 내용)으로 간다. 고른 기기 내용은 지금 GitHub sha 위에 얹는다.
-    return choice === 'remote'
-      ? { doc: remote, dropLocal: true }
-      : { doc: { ...remote, meta: savedDoc.meta, body: savedDoc.body }, dropLocal: false };
+    if (choice === 'remote') return { doc: remote, dropLocal: true };
+    // 창을 그냥 닫아도 지우지 않는 쪽(기기 내용)으로 간다. GitHub가 그 뒤에 바뀌었으면 기기 저장본이 알던 sha를 그대로 둬서,
+    // 다음 저장이 다른 기기의 커밋을 덮지 않고 ConflictError가 나게 한다.
+    const shas = moved ? { draftSha: savedDoc.draftSha, blogSha: savedDoc.blogSha } : {};
+    return { doc: { ...remote, meta: savedDoc.meta, body: savedDoc.body, ...shas }, dropLocal: false };
   }
 
   function showLoadError(message) {
@@ -341,6 +368,8 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin })
     el.publish.textContent = doc.blogPath ? '수정하기' : '출간하기';
     renderPreview();
     setStatus(dirty() ? '이 기기에만 저장됨' : '');
+    el.title.readOnly = false;
+    el.body.readOnly = false;
     wire();
   })();
 
