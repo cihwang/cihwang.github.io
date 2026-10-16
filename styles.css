@@ -163,6 +163,11 @@ a:hover { color: var(--ink-hover); }
 .view { transition: opacity 0.22s ease, filter 0.22s ease; display: flex; flex-direction: column; gap: 56px; }
 .view[hidden] { display: none; }
 
+/* 전체 원: 홈에서 한 번 더 나가면 휠이 화면 전체를 쓰고(wheel.js가 .is-full), 아래 내용은 흐려지며 비킨다. */
+.wheel.is-full { height: 100vh; height: 100dvh; z-index: 2; }
+:root.is-overview { overflow: hidden; }
+:root.is-overview .view { opacity: 0; filter: blur(6px); pointer-events: none; }
+
 /* 홈은 한 화면에 다 보이게: 폭을 넓혀 2열로 두고 간격·아래 여백을 줄인다. */
 .page:has(> .view[data-view="home"]:not([hidden])) { max-width: 960px; padding-bottom: 48px; }
 .view[data-view="home"] { gap: 40px; }

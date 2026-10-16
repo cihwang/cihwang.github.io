@@ -42,7 +42,9 @@
   const DIM_RED = 0.4;             // 다른 단계 항목·사이 눈금이 가운데 올 때 '지금 여기' 색의 세기
   const PINCH_STEP = 40;           // 핀치 누적량이 이만큼 넘으면 한 단계 들어가거나 나온다
   const BLUR_MAX = 8;              // 아래로 읽어 내려갈 때 휠이 흐려지는 최대치(px)
+  const OVERVIEW_R = 0.32;         // 전체 원의 반지름 = 화면 짧은 변 × 이 값
   // 돌리는 손맛: 도는 속도만큼 가운데 근처 눈금이 부풀었다가, 멈추면 살짝 되튀며 가라앉는다. 멈춰 있을 땐 모양 그대로.
+  const DIAL_ZOOM = 0.12;          // 가장 빠를 때 다이얼 전체가 커지는 비율(멈출 때는 되튀며 살짝 작아졌다 돌아온다)
   const STRETCH_PX = 14;           // 가장 빠를 때 가운데 눈금이 바깥으로 늘어나는 길이
   const STRETCH_FULL_PX = 12;      // 60fps 기준 프레임당 이만큼(화면 거리) 움직이면 최대로 부푼다
   const LENS_PX = 110;             // 부풂이 퍼지는 반경(가운데에서 화면 거리)
@@ -225,25 +227,37 @@
   const wrap = (x) => x - PERIOD * Math.round(x / PERIOD);
   // 항목이 가운데에서 얼마나 떨어져 있나(칸, 시계 방향 +).
   const deltaOf = (slot) => wrap(slots[slot].u + s.pos);
+  // 고를 수 있는 항목의 단계. 전체 원(-1)에서도 고르는 건 홈·카테고리다.
+  const pickLevel = () => Math.max(0, s.level);
 
-  // z: 0 = 0단계, 1 = 1단계.
+  // z: -1 = 전체 원, 0 = 0단계, 1 = 1단계.
   // 반지름과 칸 간격을 모두 기하 보간한다: 선형으로 키우면 끝에서 갑자기 커져 보인다.
+  // 전체 원에서는 한 바퀴(PERIOD 칸)가 정말 360도가 되고, 원이 화면 가운데로 내려온다.
   function geom() {
     const vw = docEl.clientWidth;
+    const vh = docEl.clientHeight;
     const z = s.z;
+    const zIn = Math.max(0, z);
+    const out = clamp(-z, 0, 1);       // 전체 원으로 물러난 정도
     const R0 = Math.max(vw / 2 / Math.sin(rad(VISIBLE_DEG[0] / 2)), MIN_R[0]);
     const R1 = Math.max(vw / 2 / Math.sin(rad(VISIBLE_DEG[1] / 2)), MIN_R[1]);
-    const R = R0 * Math.pow(R1 / R0, z);
+    const Rall = Math.min(vw, vh) * OVERVIEW_R;
+    const R = R0 * Math.pow(R1 / R0, zIn) * Math.pow(Rall / R0, out);
     const unitPx0 = Math.max(vw * SECTOR_SHARE, SECTOR_MIN_PX) / SECTOR;
     const unitPx1 = Math.max(POST_GAP_PX / minPostGapU, unitPx0 * 2);
-    const unitPx = unitPx0 * Math.pow(unitPx1 / unitPx0, z);
+    const unitPxAll = Rall * 2 * Math.PI / PERIOD;
+    const unitPx = unitPx0 * Math.pow(unitPx1 / unitPx0, zIn) * Math.pow(unitPxAll / unitPx0, out);
+    const top = lerp(ARC_TOP, vh / 2 - Rall, out);
+    // 이동하는 동안 다이얼 전체가 꼭대기를 고정한 채 커졌다가 멈추면 작아진다(부풂 스프링 s.stretch를 탄다).
+    const sc = 1 + DIAL_ZOOM * s.stretch;
+    const full = R <= vw / 2;          // 원이 화면 너비 안에 들어오면 한 바퀴를 다 그린다
     const f = s.flight;
     return {
-      vw: vw, R: R, unitPx: unitPx,
+      vw: vw, R: R, unitPx: unitPx, full: full,
       e: clamp(z, 0, 1),               // 눈금 색·길이용 단계 정도
       stepDeg: deg(unitPx / R),        // 칸 하나의 각도
-      half: deg(Math.asin(Math.min(1, vw / 2 / R))),
-      cx: vw / 2, cy: ARC_TOP + R,
+      half: full ? 180 : deg(Math.asin(Math.min(1, vw / 2 / R))),
+      cx: vw / 2, cy: top + R * sc, sc: sc,
       fineOpacity: clamp((unitPx / FINE - 6) / 10, 0, 1), // 가는 눈금은 간격이 넓어질 때만
       // 확대·축소 한가운데에서 눈금이 잠깐 길고 굵어진다(영상의 중간 프레임과 같은 느낌).
       pulse: f ? f.pulse : 0,
@@ -288,7 +302,7 @@
     const span = s.finesVisible ? 1 / FINE : 1;
     let w = clamp(1 - Math.abs(delta) / span, 0, 1);
     w = w * w * (3 - 2 * w);
-    let strength = st.slot != null && targetSet[s.level].has(st.slot) ? 1 : DIM_RED;
+    let strength = st.slot != null && targetSet[pickLevel()].has(st.slot) ? 1 : DIM_RED;
     // 섬세하게 멈춘 다른 단계 항목: 흐린 빨강에서 진한 빨강으로 천천히 차오른다.
     if (s.arm && st.slot === s.arm.slot) strength = DIM_RED + (1 - DIM_RED) * easeInOut(s.armP);
     return w * strength;
@@ -328,15 +342,15 @@
     const o = Math.max(st.o + (1 - st.o) * Math.max(0, bump), glow);
     el.style.opacity = o > 0.99 ? '' : o.toFixed(2);
     el.style.backgroundColor = glow > 0.01 ? mixRgb(st.rgb, palette.accent, glow) : '';
-    el.style.height = Math.max(1, (st.len + ext) * (1 + 0.5 * g.pulse)).toFixed(1) + 'px';
+    el.style.height = Math.max(1, (st.len + ext) * (1 + 0.5 * g.pulse) * g.sc).toFixed(1) + 'px';
     const w = 1 + 0.6 * g.pulse + 0.4 * glow;
     el.style.width = w > 1.02 ? w.toFixed(2) + 'px' : '';
-    el.style.transform = 'translate(' + g.cx.toFixed(1) + 'px,' + g.cy.toFixed(1) + 'px) rotate(' + (delta * g.stepDeg).toFixed(3) + 'deg) translateY(' + (-(g.R + ext)).toFixed(1) + 'px) translateX(-50%)';
+    el.style.transform = 'translate(' + g.cx.toFixed(1) + 'px,' + g.cy.toFixed(1) + 'px) rotate(' + (delta * g.stepDeg).toFixed(3) + 'deg) translateY(' + (-(g.R * g.sc + ext * g.sc)).toFixed(1) + 'px) translateX(-50%)';
   }
 
   function renderTicks(g) {
     tickUsed = 0;
-    const span = (g.half + 3) / g.stepDeg; // 화면에 들어오는 칸 수(가운데에서 한쪽)
+    const span = g.full ? PERIOD / 2 : (g.half + 3) / g.stepDeg; // 화면에 들어오는 칸 수(가운데에서 한쪽)
     // 바탕 눈금: 칸마다 하나(늘 보임), 그 사이 가는 눈금(간격이 넓을 때만). 항목 자리는 건너뛴다.
     const fLo = Math.ceil((-span - s.pos) * FINE);
     const fHi = Math.floor((span - s.pos) * FINE);
@@ -377,11 +391,11 @@
       const isRed = atCenter && s.centerIsTarget;
       // 라벨도 자기 눈금과 함께 부풂을 탄다(눈금이 라벨에 닿지 않게).
       const ext = (isRed ? lerp(22, 34, g.e) : isGroup ? lerp(12, 4, g.e) : lerp(0, 12, g.e)) + STRETCH_PX * bumpAt(deltaOf(lb.slot), g);
-      const reach = g.R + ext + 8 + Math.abs(Math.sin(ar)) * lb.w / 2 + Math.abs(Math.cos(ar)) * lb.h / 2;
+      const reach = (g.R + ext + 8) * g.sc + (Math.abs(Math.sin(ar)) * lb.w / 2 + Math.abs(Math.cos(ar)) * lb.h / 2) * g.sc;
       const x = g.cx + reach * Math.sin(ar);
       const y = g.cy - reach * Math.cos(ar);
-      const edge = clamp((g.half - Math.abs(a)) / 4, 0, 1);
-      const hoverProx = s.hover && s.hover.y < ARC_TOP + 60 ? clamp(1 - Math.abs(x - s.hover.x) / 150, 0, 1) : 0;
+      const edge = g.full ? 1 : clamp((g.half - Math.abs(a)) / 4, 0, 1);
+      const hoverProx = s.hover && s.z >= 0 && s.hover.y < ARC_TOP + 60 ? clamp(1 - Math.abs(x - s.hover.x) / 150, 0, 1) : 0;
       let base;
       if (isRed) base = 1;
       else if (atCenter) base = s.arm && s.arm.slot === lb.slot ? 0.6 + 0.4 * s.armP : 0.6; // 다른 단계의 항목이 가운데를 지나면 흐리게 이름만
@@ -389,7 +403,7 @@
       else base = Math.max(g.e * Math.pow(clamp(1 - Math.abs(x - g.cx) / 380, 0, 1), 0.8), hoverProx);
       const o = base * edge * (isRed ? Math.max(g.labelDim, 0.5) : g.labelDim);
       if (o < 0.05) { hideLabel(lb, false, x, y); return; }
-      const levelMatch = (isGroup ? 0 : 1) === s.level;
+      const levelMatch = (isGroup ? 0 : 1) === pickLevel();
       const armed = !!(s.arm && s.arm.slot === lb.slot);
       candidates.push({ lb: lb, x: x, y: y, o: o, prio: (isRed || armed ? 1000 : 0) + (levelMatch ? 100 : 0) + o * 50 + hoverProx * 80 });
     });
@@ -401,7 +415,7 @@
       placed.push(c);
       const el = c.lb.el;
       el.style.visibility = '';
-      el.style.transform = 'translate(' + c.x.toFixed(1) + 'px,' + c.y.toFixed(1) + 'px) translate(-50%,-50%)';
+      el.style.transform = 'translate(' + c.x.toFixed(1) + 'px,' + c.y.toFixed(1) + 'px) translate(-50%,-50%)' + (Math.abs(g.sc - 1) > 0.002 ? ' scale(' + g.sc.toFixed(3) + ')' : '');
       el.style.opacity = c.o.toFixed(2);
       el.tabIndex = 0;
       el.style.pointerEvents = '';
@@ -423,7 +437,9 @@
     // 가운데에 걸린 항목: 가장 가까운 눈금 간격의 절반 안에 있을 때만.
     const near = nearestItem();
     s.centerSlot = near.dist <= (s.finesVisible ? 0.5 / FINE : 0.5) ? near.slot : -1;
-    s.centerIsTarget = s.centerSlot >= 0 && targetSet[s.level].has(s.centerSlot);
+    s.centerIsTarget = s.centerSlot >= 0 && targetSet[pickLevel()].has(s.centerSlot);
+    // 전체 원(또는 그리로 가는 중)에는 휠이 화면 전체를 쓴다.
+    wheel.classList.toggle('is-full', s.z < -0.001);
     renderTicks(g);
     renderLabels(g);
     applyScrollBlur();
@@ -476,7 +492,7 @@
       } else {
         s.vel = 0;
         if (s.rotTarget == null) {
-          const t = nearestTarget(s.level);
+          const t = nearestTarget(pickLevel());
           if (t != null) {
             if (Math.abs(deltaOf(t)) > 0.001) { s.aim = t; s.rotTarget = s.pos - deltaOf(t); }
             else if (t !== s.cur) setCurrent(t);
@@ -533,6 +549,7 @@
     const distPx = Math.abs(toPos - fromPos) * geom().unitPx;
     const dur = levelChange ? ZOOM_MS : Math.min(FLIGHT_MS[2], FLIGHT_MS[0] + distPx * FLIGHT_MS[1]);
     s.level = level;
+    docEl.classList.toggle('is-overview', level === -1);
     s.aim = slot;
     s.vel = 0;
     s.rotTarget = null;
@@ -609,6 +626,8 @@
   function press(slot) {
     if (s.justDragged) return;
     const kind = slots[slot].kind;
+    // 전체 원에서 누르면 그 항목으로 곧장 다가간다.
+    if (s.level === -1) { flyTo(slot, kind === 'post' ? 1 : 0); return; }
     if (kind === 'post') {
       if (s.level === 1) { if (slot !== s.cur) rotateTo(slot); return; }
       goIn(slot);
@@ -625,21 +644,31 @@
     flyTo(postSlot, 1);
   }
 
-  // 나가기 = 밖으로. 글 단계 → 그 글의 카테고리. 카테고리 단계 → 홈.
+  // 나가기 = 밖으로. 글 단계 → 그 글의 카테고리. 카테고리 단계 → 홈 → 전체 원.
   function goOut(toSlot) {
     if (s.level === 1) {
       const from = s.flight && s.flight.swapSlot != null ? s.flight.swapSlot : s.cur;
       flyTo(toSlot != null ? toSlot : catSlot[slots[from].cat], 0);
       return;
     }
-    if (s.cur !== HOME) rotateTo(HOME);
+    if (s.level === -1) return;
+    if (s.cur !== HOME) { rotateTo(HOME); return; }
+    // 홈에서 한 번 더 나가면 원 한 바퀴가 다 보이게 물러난다. 아래 내용은 비킨다.
+    window.scrollTo(0, 0);
+    flyTo(HOME, -1);
+  }
+
+  // 들어가기(Enter·핀치 아웃): 전체 원 → 지금 항목의 0단계, 0단계 카테고리 → 첫 글.
+  function goInFromHere() {
+    if (s.level === -1) flyTo(s.cur, 0);
+    else if (s.level === 0 && slots[s.cur].kind === 'cat') goIn(postsOf(slots[s.cur].cat)[0]);
   }
 
   // 옆 항목으로. 원이라 끝에서 처음으로 이어진다(취향 다음 = 홈).
   function step(dir) {
-    const list = targets[s.level];
+    const list = targets[pickLevel()];
     if (!list.length) return;
-    const from = s.aim >= 0 ? s.aim : (list.indexOf(s.cur) >= 0 ? s.cur : nearestTarget(s.level));
+    const from = s.aim >= 0 ? s.aim : (list.indexOf(s.cur) >= 0 ? s.cur : nearestTarget(pickLevel()));
     const i = (list.indexOf(from) + dir + list.length) % list.length;
     rotateTo(list[i]);
   }
@@ -854,10 +883,10 @@
     } else if (e.type === 'pointerup' && !e.target.closest('.label')) {
       // 끌지 않고 호 위를 눌렀으면, 누른 자리에서 가까운 같은 단계 항목으로 돈다.
       const g = geom();
-      const a = deg(Math.asin(clamp((e.clientX - g.cx) / g.R, -1, 1)));
+      const a = deg(Math.atan2(e.clientX - g.cx, g.cy - e.clientY)); // 전체 원에서는 아래쪽도 누를 수 있다
       const at = a / g.stepDeg; // 누른 자리(가운데 기준 칸)
       let best = -1, bd = 32 / g.unitPx;
-      targets[s.level].forEach((i) => { const dd = Math.abs(deltaOf(i) - at); if (dd < bd) { bd = dd; best = i; } });
+      targets[pickLevel()].forEach((i) => { const dd = Math.abs(deltaOf(i) - at); if (dd < bd) { bd = dd; best = i; } });
       if (best >= 0) press(best);
     }
     kick();
@@ -880,7 +909,7 @@
       s.pinchLock = true;
       setTimeout(() => { s.pinchLock = false; }, 500);
       if (out) goOut();
-      else if (s.level === 0 && slots[s.cur].kind === 'cat') goIn(postsOf(slots[s.cur].cat)[0]);
+      else goInFromHere();
       return;
     }
     const delta = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * (e.deltaMode === 1 ? 16 : 1);
@@ -920,11 +949,12 @@
       goOut();
     } else if (e.key === 'Enter' && (document.activeElement === document.body || !document.activeElement)) {
       // 초점이 단추에 있으면 그 단추가 Enter를 받는다. 아무 데도 없을 때만 '지금 항목 안으로'.
-      if (s.level === 0 && slots[s.cur].kind === 'cat') { e.preventDefault(); goIn(postsOf(slots[s.cur].cat)[0]); }
+      if (s.level === -1 || slots[s.cur].kind === 'cat') { e.preventDefault(); goInFromHere(); }
     }
   });
 
-  hub.addEventListener('click', () => goOut());
+  // 전체 원에서 맨 위 이름을 누르면 다시 가까이(지금 항목으로) 돌아온다.
+  hub.addEventListener('click', () => { if (s.level === -1) goInFromHere(); else goOut(); });
 
   // ── 방문 집계(GoatCounter) ────────────────────────────────
   // 세는 쪽은 index.html의 count.js, 읽는 쪽은 공개 카운터(사이트 설정 'Allow adding visitor counts'가 켜져 있어야 한다).
