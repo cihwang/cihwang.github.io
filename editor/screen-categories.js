@@ -85,6 +85,8 @@ export function showCategories({ session, isCurrent, loseLogin, notice }) {
   /** 오류를 화면에 알린다. 로그인이 풀렸으면 로그인으로, 동시 변경(충돌)이면 목록을 다시 읽는다. */
   async function report(e, what) {
     if (e instanceof AuthError) return void loseLogin();
+    // 이름 바꾸기가 초안 쪽에서 토큰이 풀려 멈췄으면, 다시 읽기 전에 그 부분 실패 문구부터 로그인 화면에 남긴다.
+    if (e.cause instanceof AuthError) return void loseLogin(e.message);
     if (e instanceof ConflictError) {
       status.textContent = CONFLICT_RELOAD;
       await reloadSilently();
@@ -92,10 +94,7 @@ export function showCategories({ session, isCurrent, loseLogin, notice }) {
     }
     status.textContent = `${what} ${e.message}`;
     // 이름 바꾸기가 중간에 멈췄을 수 있어(블로그만 바뀜) 목록은 다시 읽어 둔다.
-    if (e.cause) {
-      await reloadSilently();
-      if (e.cause instanceof AuthError && isCurrent()) loseLogin(e.message);
-    }
+    if (e.cause) await reloadSilently();
   }
 
   async function reloadSilently() {
@@ -130,8 +129,9 @@ export function showCategories({ session, isCurrent, loseLogin, notice }) {
       await store.addCategory(name);
       if (!isCurrent()) return;
       addName.value = '';
-      await reloadCategories();
-      if (isCurrent()) status.textContent = `'${name}' 카테고리를 만들었어요. 사이트에는 배포가 끝나면 보여요.`;
+      status.textContent = `'${name}' 카테고리를 만들었어요. 사이트에는 배포가 끝나면 보여요.`;
+      // 커밋은 끝났으니 다시 읽기가 실패해도 만들기 실패로 알리지 않는다.
+      await reloadSilently();
     } catch (err) {
       if (isCurrent()) await report(err, '만들지 못했어요.');
     } finally {
@@ -192,7 +192,7 @@ export function showCategories({ session, isCurrent, loseLogin, notice }) {
         counts[to] = counts[from];
         delete counts[from];
       }
-      await reloadCategories();
+      await reloadSilently();
     } catch (err) {
       if (!isCurrent()) return;
       dialog.close();
