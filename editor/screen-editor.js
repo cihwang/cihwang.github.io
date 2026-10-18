@@ -7,7 +7,7 @@ import { applyFormat } from './format.js';
 import { $, local, editHash, failText, mount, addNotice, fetchLive, categoryPills, followRenderedLink, CONFLICT_TEXT } from './ui.js';
 import { createPhotoUploader, removeUploadPlaceholders } from './photo-upload.js';
 import { createPublishDialog } from './publish-dialog.js';
-import { isSaveConflict, resolveSaveConflict } from './conflict-dialog.js';
+import { isSaveConflict, resolveSaveConflict, resolveBlogConflict } from './conflict-dialog.js';
 import { deleteOpenDoc } from './delete-dialog.js';
 import { createHelpDialog } from './help-dialog.js';
 import { createPreview } from './preview.js';
@@ -176,10 +176,14 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
     if (isCurrent()) history.replaceState(null, '', editHash('drafts', next));
   }
 
-  async function saveRemote() {
-    if (!doc || saving || finished) return;
+  /**
+   * 초안 저장소에 임시저장한다. 됐으면 true.
+   * @param {boolean} [force] 바뀐 내용이 없어도 저장한다(공개본 기준을 바꿔 초안의 base_sha만 새로 써야 할 때).
+   */
+  async function saveRemote(force = false) {
+    if (!doc || saving || finished) return false;
     // 이미 초안 저장소와 같은 내용이면 빈 커밋을 만들지 않는다.
-    if (doc.draftPath && !dirty()) return setStatus('바뀐 내용이 없어요.');
+    if (doc.draftPath && !dirty() && !force) return setStatus('바뀐 내용이 없어요.');
     saving = true;
     // GitHub가 실패해도 쓰던 내용이 남도록 기기에 먼저 저장한다.
     saveLocal();
@@ -197,6 +201,7 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
       saveLocal();
       const later = localFailed ? ' (그 뒤 고친 내용은 아직 어디에도 저장되지 않았어요)' : ' (그 뒤 고친 내용은 이 기기에만 있어요)';
       setStatus(`저장됨 · ${clockText(new Date())}${dirty() ? later : ''}`);
+      return true;
     } catch (e) {
       if (e instanceof AuthError) return loseLoginSaved();
       conflict = isSaveConflict(e, sent);
@@ -211,9 +216,18 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
     if (conflict && isCurrent()) {
       await resolveSaveConflict({
         ask, getDoc: () => doc, key: () => key, gh, draftsRepo, localFailed: () => localFailed, setStatus, stopLocal, goTo,
-        retrySave: saveRemote, loseLogin: loseLoginSaved, isCurrent,
+        retrySave: () => saveRemote(force), loseLogin: loseLoginSaved, isCurrent,
       });
     }
+    return false;
+  }
+
+  /** 출간·삭제가 "고치기 시작한 뒤 공개본이 바뀜"으로 막혔을 때 지금 공개본을 기준으로 다시 잡을지 묻는다. */
+  function resolveBlogChange(action) {
+    return resolveBlogConflict({
+      action, ask, getDoc: () => doc, key: () => key, store, localFailed: () => localFailed, setStatus, saveLocal, stopLocal,
+      saveDraft: () => saveRemote(true), goTo, loseLogin: loseLoginSaved, isCurrent,
+    });
   }
 
   /** 출간 설정 창에서 고른 값을 머리말과 쓰기 화면 알약에 넣는다. */
@@ -266,6 +280,7 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
     const publishDialog = createPublishDialog({
       dialog: el['publish-dialog'], session, getDoc: () => doc, applyMeta, adoptShas, uploading: uploader.pending,
       saveLocal, stopLocal, dropLocal, goTo, loseLogin: loseLoginSaved, isCurrent, opener: el.publish,
+      resolveBlogConflict: () => resolveBlogChange('publish'),
     });
     const helpDialog = createHelpDialog({ dialog: el['help-dialog'], gh, loseLogin: loseLoginSaved, isCurrent });
     listen(el.title, 'input', () => { doc.meta.title = el.title.value; changed(); });
@@ -284,7 +299,7 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
       if (button?.dataset.format) format(button.dataset.format);
       else if (button?.dataset.action === 'photo') uploader.pick();
     });
-    listen(el.save, 'click', saveRemote);
+    listen(el.save, 'click', () => saveRemote());
     listen(el.publish, 'click', () => {
       if (uploader.pending()) return setStatus('사진을 올리는 중이에요. 다 올라간 뒤 출간해 주세요.');
       publishDialog.open();
@@ -292,7 +307,10 @@ export function showEditor({ name, params, session, isCurrent, ask, loseLogin, r
     listen(el.help, 'click', helpDialog.open);
     listen(el.delete, 'click', () => {
       el.menu.open = false;
-      deleteOpenDoc({ ask, getDoc: () => doc, key: () => key, store, saveLocal, stopLocal, dropLocal, goTo, setStatus, loseLogin: loseLoginSaved, isCurrent });
+      deleteOpenDoc({
+        ask, getDoc: () => doc, key: () => key, store, saveLocal, stopLocal, dropLocal, goTo, setStatus, loseLogin: loseLoginSaved, isCurrent,
+        resolveBlogConflict: () => resolveBlogChange('delete'),
+      });
     });
     // 펼친 메뉴는 바깥을 누르거나 Esc로 닫는다(details는 저절로 닫히지 않는다).
     listen(document, 'click', (e) => {

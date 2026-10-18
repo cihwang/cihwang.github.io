@@ -16,6 +16,11 @@ export const local = createLocal();
 /** `root` 안에서 `data-role`이 `role`인 첫 요소. */
 export const $ = (root, role) => root.querySelector(`[data-role="${role}"]`);
 
+/** 사이트 글 주소. 사이트(wheel.js)가 조각마다 인코딩·해독하므로 같은 모양으로 만든다. */
+export const postUrl = (meta) => `${SITE_URL}#/${encodeURIComponent(meta.category)}/${encodeURIComponent(meta.slug)}`;
+/** 화면에 보여 줄 주소. 읽기 쉽게 인코딩하지 않는다. */
+export const shownUrl = (meta) => `${SITE_URL}#/${meta.category}/${meta.slug}`;
+
 /** 글 편집 주소. `repo`는 `'drafts'|'blog'`, `path`는 저장소 안 `posts/…md`. */
 export const editHash = (repo, path) => `#/edit?repo=${repo}&path=${encodeURIComponent(path)}`;
 

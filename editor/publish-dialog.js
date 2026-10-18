@@ -1,17 +1,19 @@
 // 출간 설정 창: 카테고리·날짜·주소를 고르고, 출간한 뒤 사이트에 반영될 때까지 기다려 그 글로 데려간다.
 import { renderMarkdown, slugFromPath } from '../markdown.js';
-import { SITE_URL, BLOG_REPO } from './config.js';
+import { BLOG_REPO } from './config.js';
 import { AuthError, ConflictError, GitHubError } from './github.js';
 import { waitForDeploy } from './deploy.js';
 import { parsePost, serializePost, slugFromTitle, postPath } from './post.js';
 import { checkPublish } from './publish-check.js';
-import { $, editHash, fetchLive, categoryPills } from './ui.js';
+import { $, editHash, fetchLive, categoryPills, postUrl, shownUrl } from './ui.js';
+import { isBlogConflict } from './conflict-dialog.js';
 
 const BUSY_TEXT = '올리는 중… 사이트에 보이기까지 보통 30초~1분 걸려요.';
 const NOT_YET_TEXT = '아직 반영 중이에요. 잠시 후 사이트에서 확인해 주세요.';
 const BUILD_HINT = '시간이 더 지나도 안 보이면 빌드가 실패했을 수 있어요.';
 const ACTIONS_URL = `https://github.com/${BLOG_REPO}/actions`;
-const PUBLISH_CONFLICT = '공개된 글이 그 사이 다른 곳에서 바뀌었거나, 같은 날짜·주소에 다른 글이 있어요. 덮어쓰지 않았어요. 목록에서 글을 다시 열어 확인해 주세요.';
+// 공개본 자체가 바뀐 충돌은 resolveBlogConflict 창이 맡는다. 여기 오는 ConflictError는 옮길 자리에 다른 글이 있는 경우다.
+const PUBLISH_CONFLICT = '같은 날짜·주소(slug)에 다른 글이 이미 있어요. 덮어쓰지 않았어요. 날짜나 주소를 바꿔 주세요.';
 const ROLES = ['publish-form', 'publish-notes', 'publish-fields', 'publish-cats', 'publish-url', 'publish-msg',
   'publish-cancel', 'publish-confirm', 'publish-to-list', 'error-category', 'error-date', 'error-slug'];
 const pad = (n) => String(n).padStart(2, '0');
@@ -24,10 +26,6 @@ function todayText() {
 
 /** 블로그에 올라가는 파일 텍스트(store.publish가 쓰는 것과 같다). */
 const publishedText = (doc) => serializePost(withoutDraft(doc.meta), doc.body);
-/** 사이트 글 주소. 사이트(wheel.js)가 조각마다 인코딩·해독하므로 같은 모양으로 만든다. */
-const postUrl = (meta) => `${SITE_URL}#/${encodeURIComponent(meta.category)}/${encodeURIComponent(meta.slug)}`;
-/** 화면에 보여 줄 주소. 읽기 쉽게 인코딩하지 않는다. */
-const shownUrl = (meta) => `${SITE_URL}#/${meta.category}/${meta.slug}`;
 
 /**
  * 쓰기 화면에 출간 설정 창을 붙인다. 출간·수정은 `store.publish` 한 번이고, 성공하면 기기 저장본을 지운 뒤
@@ -36,8 +34,10 @@ const shownUrl = (meta) => `${SITE_URL}#/${meta.category}/${meta.slug}`;
  *   applyMeta: (patch: { category: string, date: string, slug: string }, categories: string[]) => void,
  *   adoptShas: (patch: { blogPath: string, blogSha: string }) => void,
  *   uploading: () => number, saveLocal: () => boolean, stopLocal: () => void, dropLocal: () => string|null,
- *   goTo: (hash: string, notice: string) => void, loseLogin: () => void, isCurrent: () => boolean, opener: HTMLElement }} ctx
+ *   goTo: (hash: string, notice: string) => void, loseLogin: () => void, isCurrent: () => boolean, opener: HTMLElement,
+ *   resolveBlogConflict: () => Promise<void> }} ctx
  *   `applyMeta`는 고른 값을 글 머리말과 쓰기 화면 알약에 넣는다. `adoptShas`는 GitHub에서 새로 읽은 공개본 경로·sha를 글에 넣는다.
+ *   `resolveBlogConflict`는 고치기 시작한 뒤 공개본이 바뀌어 출간이 막혔을 때 이 창을 닫고 부른다(어느 쪽을 기준으로 할지 묻는다).
  *   `uploading`은 올리는 중인 사진 수.
  *   `stopLocal`은 이후 기기 저장을 멈추고, `dropLocal`은 기기 저장본을 지운다(못 지우면 그 이유 문장).
  *   `goTo`는 주소를 바꿔 그 화면을 안내와 함께 새로 연다. `opener`는 창을 닫으면 초점을 돌려줄 단추.
@@ -202,6 +202,13 @@ export function createPublishDialog(ctx) {
       phase = 'closed';
       dialog.close();
       return ctx.loseLogin();
+    }
+    if (isBlogConflict(err, sent)) {
+      // 고치기 시작한 뒤 공개본이 에디터 밖에서 바뀌었다. 다시 열어도 같은 기준(base_sha)으로 또 부딪히므로,
+      // 이 창을 닫고 어느 쪽을 기준으로 할지 묻는다. 고른 뒤 수정하기를 다시 눌러야만 블로그에 쓴다.
+      phase = 'closed';
+      dialog.close();
+      return ctx.resolveBlogConflict();
     }
     // 초안이 있는 글의 GitHub 오류는 블로그 커밋 뒤 초안 삭제에서 났을 수 있다. 그대로 다시 누르면 오래된 sha로 부딪히므로 확인한다.
     if (err instanceof GitHubError && !(err instanceof ConflictError) && sent.draftPath) {

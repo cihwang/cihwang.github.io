@@ -23,16 +23,18 @@ let screenId = 0;
 
 /**
  * 묻기 창을 띄우고 고른 단추의 `value`를 돌려준다. Esc로 닫으면 빈 문자열.
- * @param {string} message 해요체 질문
+ * @param {string|(string|Node)[]} message 해요체 질문. 링크를 넣으려면 글과 요소의 배열(글은 글자로만 들어간다).
  * @param {{ label: string, value: string, primary?: boolean }[]} choices 처음 것에 초점이 간다(지우기처럼 되돌릴 수 없는 일은 취소를 처음에).
  */
 function ask(message, choices) {
-  $(askDialog, 'ask-text').textContent = message;
-  $(askDialog, 'ask-actions').replaceChildren(...choices.map(({ label, value, primary }) => {
+  $(askDialog, 'ask-text').replaceChildren(...[message].flat());
+  $(askDialog, 'ask-actions').replaceChildren(...choices.map(({ label, value, primary }, i) => {
     const button = document.createElement('button');
     button.className = primary ? 'ed-btn is-primary' : 'ed-btn';
     button.value = value;
     button.textContent = label;
+    // 질문 글에 링크가 있어도 초점은 링크가 아니라 첫 선택지로 간다.
+    button.autofocus = i === 0;
     return button;
   }));
   askDialog.returnValue = '';

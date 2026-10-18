@@ -643,6 +643,75 @@ test('publish: 고치던 초안을 만든 뒤 공개본이 직접 바뀌었으�
   assert.equal(fake.has(DRAFTS, path), true, '고치던 초안은 남는다');
 });
 
+/** 글-01을 열어 고친 초안을 만든 뒤 공개본을 에디터 밖에서 고쳐, 다시 열어도 출간이 ConflictError인 상태로 둔다. */
+async function stuckOnDirectEdit(fake, store) {
+  const path = 'posts/예시/글-01.md';
+  await store.saveDraft({ ...await store.open({ repo: 'blog', path }), meta: { title: '글 01', category: '글', date: '2026-01-06', slug: '글-01' }, body: '에디터에서 고침\n' });
+  fake.overwrite(BLOG, path, post({ title: '글 01', category: '글', date: '2026-01-06' }, '직접 고침\n'));
+  const stuck = await store.open({ repo: 'drafts', path });
+  await assert.rejects(store.publish(stuck, LIVE), ConflictError, '전제: 고치기 시작한 뒤 직접 바뀐 공개본과 부딪힌다');
+  return { path, stuck };
+}
+
+test('rebaseOnLive: 지금 공개본 내용·sha로 다시 잡고(쓰지 않음), saveDraft하면 base_sha가 바뀌어 다시 고쳐 출간할 수 있다', async () => {
+  const fake = standardFake();
+  const store = await storeWithSite(fake);
+  const { path, stuck } = await stuckOnDirectEdit(fake, store);
+  const liveSha = fake.sha(BLOG, path);
+  const commits = fake.commits.length;
+  fake.reset();
+
+  const rebased = await store.rebaseOnLive(stuck);
+  assert.ok(fake.calls.every((c) => c.method === 'getFile'), '다시 잡기만으로는 GitHub에 아무것도 쓰지 않는다');
+  assert.equal(fake.commits.length, commits, '커밋 없음');
+  assert.equal(rebased.blogSha, liveSha, 'blogSha는 지금 공개본 sha');
+  assert.equal(rebased.body, '직접 고침\n', '내용은 지금 공개본');
+  assert.equal(rebased.meta.title, '글 01', '머리말도 지금 공개본');
+  assert.equal(rebased.draftPath, stuck.draftPath, '고치던 초안 자리를 그대로 쓴다(그 초안을 덮어 저장)');
+  assert.equal(rebased.draftSha, stuck.draftSha, '초안 sha도 그대로(다른 기기 저장과는 여전히 부딪힌다)');
+  assert.equal(stuck.body, '에디터에서 고침\n', '받은 Doc은 바꾸지 않는다');
+
+  const saved = await store.saveDraft(rebased);
+  assert.match(fake.text(DRAFTS, path), new RegExp(`^base_sha: ${liveSha}$`, 'm'), '다시 잡은 뒤 임시저장하면 초안의 base_sha가 지금 공개본 sha');
+  // 사용자가 공개본 위에 고친 내용을 다시 넣는다.
+  await store.saveDraft({ ...saved, meta: { ...saved.meta, slug: '글-01' }, body: '직접 고침\n다시 고침\n' });
+  const reopened = await store.open({ repo: 'drafts', path });
+  assert.equal(reopened.blogSha, liveSha, '다시 열면 바뀐 base_sha(지금 공개본 sha)를 쓴다');
+  await store.publish(reopened, LIVE);
+  assert.equal(parsePost(fake.text(BLOG, path)).body, '직접 고침\n다시 고침\n', '공개본 위에 다시 고친 내용이 출간된다');
+  assert.equal(fake.has(DRAFTS, path), false, '출간 뒤 고치던 초안은 지워진다');
+});
+
+test('rebaseOnLive(keepMine): 내용은 그대로, blogSha만 지금 공개본 sha로. saveDraft 뒤 출간하면 직접 바꾼 내용을 덮는다', async () => {
+  const fake = standardFake();
+  const store = await storeWithSite(fake);
+  const { path, stuck } = await stuckOnDirectEdit(fake, store);
+  const liveSha = fake.sha(BLOG, path);
+
+  const rebased = await store.rebaseOnLive(stuck, { keepMine: true });
+  assert.deepEqual({ meta: rebased.meta, body: rebased.body }, { meta: stuck.meta, body: stuck.body }, '쓰던 내용은 그대로');
+  assert.equal(rebased.blogSha, liveSha, 'blogSha만 지금 공개본 sha');
+  await store.saveDraft(rebased);
+  assert.match(fake.text(DRAFTS, path), new RegExp(`^base_sha: ${liveSha}$`, 'm'), '초안의 base_sha가 지금 공개본 sha');
+  assert.equal(parsePost(fake.text(BLOG, path)).body, '직접 고침\n', '출간 전까지 공개본은 그대로');
+
+  const reopened = await store.open({ repo: 'drafts', path });
+  assert.equal(reopened.blogSha, liveSha, '다시 열어도 지금 공개본 sha');
+  await store.publish(reopened, LIVE);
+  assert.equal(parsePost(fake.text(BLOG, path)).body, '에디터에서 고침\n', '출간하면 직접 바꾼 공개본을 지금 내용으로 덮는다');
+});
+
+test('rebaseOnLive: 공개된 글이 아니면 GitHub 호출 없이, 공개본이 사라졌으면 경로를 담아 오류', async () => {
+  const fake = standardFake();
+  const store = await storeWithSite(fake);
+  await assert.rejects(store.rebaseOnLive(store.newDoc('글')), /공개된 글이 아니/, '새 글은 맞출 공개본이 없다');
+  assert.equal(fake.calls.length, 0, 'GitHub 호출 없음');
+  const path = 'posts/예시/글-01.md';
+  const doc = await store.open({ repo: 'blog', path });
+  await fake.gh.deleteFile(BLOG, path, fake.sha(BLOG, path), '직접 지움');
+  await assert.rejects(store.rebaseOnLive(doc), /사라졌어요.*글-01\.md/, '사라진 공개본은 경로를 담아 알린다');
+});
+
 test('publish: 평소 수정은 그대로 출간되고, 공개본에는 base_sha 줄이 없다', async () => {
   const fake = standardFake();
   const store = await storeWithSite(fake);

@@ -189,6 +189,23 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
   }
 
   /**
+   * 고치기 시작한 뒤 공개본이 에디터 밖에서 바뀌어 출간·삭제가 `ConflictError`일 때, 지금 공개본을 기준으로 다시 잡은 Doc을 돌려준다.
+   * GitHub에는 쓰지 않는다. 돌려받은 Doc을 `saveDraft`하면 고치던 초안의 `base_sha`가 지금 공개본 sha로 바뀌어
+   * 다시 열어도 옛 기준으로 부딪히지 않는다.
+   * @param {object} doc `blogPath`가 있는 Doc. 바꾸지 않는다.
+   * @param {{ keepMine?: boolean }} [options] `keepMine`이면 머리말·본문은 그대로 두고 `blogSha`만 바꾼다(그대로 출간하면
+   *   공개본에서 직접 바꾼 내용을 덮는다). 아니면(기본) 머리말·본문도 지금 공개본으로 바꾼다.
+   * @returns {Promise<object>} 새 `blogSha`가 든 Doc. `draftPath`·`draftSha`는 그대로라 다른 기기 저장과는 여전히 부딪힌다.
+   * @throws {Error} `blogPath`가 없을 때(GitHub 호출 없음), 공개본이 그 사이 사라졌을 때
+   */
+  async function rebaseOnLive(doc, { keepMine = false } = {}) {
+    if (!doc.blogPath) throw new Error('공개된 글이 아니라 맞출 공개본이 없어요.');
+    const live = await readPost(blogRepo, doc.blogPath);
+    if (!live) throw new Error(`공개된 글이 그 사이 사라졌어요. (${doc.blogPath})`);
+    return keepMine ? { ...doc, blogSha: live.sha } : { ...doc, meta: live.meta, body: live.body, blogSha: live.sha };
+  }
+
+  /**
    * 본문이 가리키는 사진 중 블로그에 없고 초안 저장소에 있는 것을 `{ path, base64 }`로.
    * 어디에도 없는 사진(아직 올리는 중 등)이 있으면 던진다 — 깨진 그림으로 출간되면 같은 내용 다시 누르기로는 고쳐지지 않는다.
    */
@@ -365,7 +382,7 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
   }
 
   return {
-    listDrafts, open, newDoc, saveDraft, uploadMedia, publish, deleteDraft, deletePost, moveToDrafts,
+    listDrafts, open, newDoc, saveDraft, uploadMedia, publish, rebaseOnLive, deleteDraft, deletePost, moveToDrafts,
     getSite, countByCategory, addCategory, renameCategory,
   };
 }

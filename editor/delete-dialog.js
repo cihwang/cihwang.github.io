@@ -1,6 +1,7 @@
 // 쓰기 화면의 삭제: 확인을 받은 뒤 GitHub에서 지우고, 그다음에만 기기 저장본을 지운다(순서가 반대면 실패 때 글이 사라진다).
 import { AuthError, GitHubError } from './github.js';
 import { failText } from './ui.js';
+import { isBlogConflict } from './conflict-dialog.js';
 
 function deleteQuestion(doc, localOnly) {
   const name = doc.meta.title || '(제목 없음)';
@@ -19,10 +20,12 @@ function deleteQuestion(doc, localOnly) {
  * 열린 글을 지운다. 기기 저장 키가 `new:`(이 기기에만 있는 새 글, 또는 충돌 때 따로 남긴 사본)이면 기기 저장본만 지우고
  * GitHub는 건드리지 않는다 — 사본은 원래 글의 `blogPath`·`draftPath`를 들고 있지만 그 글의 주인이 아니다.
  * 그 밖에는 공개된 글이면 열 때 받은 `blogSha`로 `deletePost`(블로그 한 커밋), 초안이면 열 때 받은 sha로 `deleteDraft`.
- * 끝나면 목록으로 간다. 공개본·초안이 그 사이 바뀌었으면(sha 다름) 지우지 않고 알린다.
+ * 끝나면 목록으로 간다. 공개본·초안이 그 사이 바뀌었으면(sha 다름) 지우지 않는다. 공개본이 바뀌었으면 `resolveBlogConflict`로 묻고,
+ * 초안이 바뀌었으면 다시 열어 달라고 알린다.
  * @param {{ ask: (message: string, choices: object[]) => Promise<string>, getDoc: () => object, key: () => string, store: object,
  *   saveLocal: () => boolean, stopLocal: () => void, dropLocal: () => string|null, goTo: (hash: string, notice: string) => void,
- *   setStatus: (text: string) => void, loseLogin: () => void, isCurrent: () => boolean }} ctx
+ *   setStatus: (text: string) => void, loseLogin: () => void, isCurrent: () => boolean,
+ *   resolveBlogConflict: () => Promise<void> }} ctx
  *   `key`는 지금 기기 저장 키. `dropLocal`은 기기 저장본을 지우고 못 지우면 그 이유 문장을 돌려준다.
  */
 export async function deleteOpenDoc(ctx) {
@@ -43,8 +46,12 @@ export async function deleteOpenDoc(ctx) {
   } catch (e) {
     if (!ctx.isCurrent()) return;
     if (e instanceof AuthError) return ctx.loseLogin();
-    const moved = doc.blogPath ? '공개된 글이 그 사이 다른 곳에서 바뀌었어요.' : '다른 기기에서 이 초안을 먼저 저장했어요.';
-    const reason = e instanceof GitHubError && e.status === 409 ? `${moved} 목록에서 다시 열어 확인한 뒤 지워 주세요.` : failText(e);
+    // 공개본이 바뀐 충돌은 다시 열어도 초안의 base_sha로 또 부딪히므로, 어느 쪽을 기준으로 할지 묻는 창으로 넘긴다.
+    if (isBlogConflict(e, doc)) return ctx.resolveBlogConflict();
+    // 초안은 다시 열면 새 sha를 받으니 다시 열기 안내가 맞다.
+    const reason = e instanceof GitHubError && e.status === 409 && !doc.blogPath
+      ? '다른 기기에서 이 초안을 먼저 저장했어요. 목록에서 다시 열어 확인한 뒤 지워 주세요.'
+      : failText(e);
     return ctx.setStatus(`지우지 못했어요. ${reason}`);
   }
   if (doc.blogPath && doc.draftPath) {
