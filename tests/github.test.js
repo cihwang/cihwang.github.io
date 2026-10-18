@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createGitHub, GitHubError, AuthError, ConflictError,
-  encodePath, utf8ToBase64, base64ToUtf8,
+  encodePath, utf8ToBase64, base64ToUtf8, gitBlobSha,
 } from '../editor/github.js';
 
 const TOKEN = 'ghp_SECRET_TOKEN';
@@ -36,6 +36,13 @@ test('UTF-8 base64 왕복과 줄바꿈 섞인 base64', () => {
   const wrapped = b64.replace(/(.{60})/g, '$1\n');
   assert.equal(base64ToUtf8(wrapped), '가나다라마바사'.repeat(20), '60자마다 줄바꿈이 있어도 읽는다');
   assert.equal(encodePath('posts/예시/a b.md'), 'posts/%EC%98%88%EC%8B%9C/a%20b.md', '조각마다 인코딩, 슬래시는 유지');
+});
+
+test('gitBlobSha: git hash-object와 같은 blob sha(바이트 그대로, CRLF·한글·이모지 포함)', async () => {
+  const bytes = (text) => new TextEncoder().encode(text);
+  assert.equal(await gitBlobSha(bytes('')), 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391', '빈 파일의 잘 알려진 blob sha');
+  assert.equal(await gitBlobSha(bytes('hello\n')), 'ce013625030ba8dba906f756967f9e9ca394464a', 'git hash-object와 같다');
+  assert.equal(await gitBlobSha(bytes('가 😀\r\n')), '1d8b2399e8897125587fef304528f0f6f2bf6118', '길이는 글자 수가 아니라 UTF-8 바이트 수, CRLF는 그대로');
 });
 
 test('getFile: URL 인코딩, 헤더, 디코딩', async () => {

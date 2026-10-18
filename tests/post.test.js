@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePost, serializePost, slugFromTitle, postPath, validateDraft, validatePublish, validateCategoryName, recategorize, isPostPath } from '../editor/post.js';
+import { parsePost, serializePost, slugFromTitle, postPath, validateDraft, validatePublish, validateCategoryName, recategorize, replaceFrontValue, isPostPath } from '../editor/post.js';
 
 const text = '---\r\ntitle: Agentforce Coworker 소개\r\ncategory: 공부\r\ndate: 2026-10-13\r\ndraft: true\r\nextra: 1\r\n---\r\n## 가 😀\r\n';
 
@@ -36,6 +36,13 @@ test('카테고리 바꾸기는 머리말 한 줄만 고친다', () => {
   const crlf = '---\r\ntitle: t\r\ncategory: 공부\r\n---\r\n본문 category: 공부\r\n';
   assert.equal(recategorize(crlf, '공부', '배움'), '---\r\ntitle: t\r\ncategory: 배움\r\n---\r\n본문 category: 공부\r\n', '머리말 한 줄만, 줄바꿈·본문 그대로');
   assert.equal(recategorize(crlf, '글', '배움'), null, '다른 카테고리 글은 건드리지 않는다');
+});
+
+test('replaceFrontValue: 머리말의 그 키 값이 from일 때만 그 줄의 값만 바꾼다', () => {
+  const crlf = '---\r\ntitle: t\r\nbase_sha: old\r\n---\r\nbase_sha: old\r\n';
+  assert.equal(replaceFrontValue(crlf, 'base_sha', 'old', 'new'), '---\r\ntitle: t\r\nbase_sha: new\r\n---\r\nbase_sha: old\r\n', '머리말 한 줄만, 줄바꿈·본문 그대로');
+  assert.equal(replaceFrontValue(crlf, 'base_sha', 'other', 'new'), null, '값이 from이 아니면 바꾸지 않는다');
+  assert.equal(replaceFrontValue('---\ntitle: t\n---\nbase_sha: old\n', 'base_sha', 'old', 'new'), null, '본문에만 있는 줄은 머리말이 아니다');
 });
 
 test('카테고리 이름 검사: 따옴표는 쓸 수 없다(카테고리 바꾸기 뒤 머리말에서 벗겨져 빌드가 깨진다)', () => {

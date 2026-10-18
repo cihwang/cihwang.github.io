@@ -50,6 +50,21 @@ export function utf8ToBase64(text) {
 }
 
 /**
+ * git이 파일 내용에 매기는 blob sha(`git hash-object`와 같다): `sha1("blob <바이트 수>\0" + 바이트)`.
+ * 방금 커밋한 파일의 새 sha를 GitHub에 다시 묻지 않고 알 때 쓴다(다시 물으면 그 사이 끼어든 다른 커밋의 sha를 받을 수 있다).
+ * @param {Uint8Array} bytes 올린 내용 그대로(줄바꿈 변환 없음)
+ * @returns {Promise<string>} 소문자 16진수 40자
+ */
+export async function gitBlobSha(bytes) {
+  const header = new TextEncoder().encode(`blob ${bytes.length}\0`);
+  const data = new Uint8Array(header.length + bytes.length);
+  data.set(header);
+  data.set(bytes, header.length);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-1', data));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
  * base64를 UTF-8 문자열로 되돌린다. GitHub가 넣는 줄바꿈·공백은 무시한다.
  * @param {string} b64
  * @returns {string}

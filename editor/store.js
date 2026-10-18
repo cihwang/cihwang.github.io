@@ -4,11 +4,11 @@
  */
 import { slugFromPath } from '../markdown.js';
 import { BLOG_REPO } from './config.js';
-import { utf8ToBase64, ConflictError } from './github.js';
+import { utf8ToBase64, gitBlobSha, ConflictError } from './github.js';
 import { mediaFileName, mediaRefs } from './media.js';
 import {
   parsePost, serializePost, slugFromTitle, postPath,
-  validateDraft, validatePublish, validateCategoryName, recategorize,
+  validateDraft, validatePublish, validateCategoryName, recategorize, replaceFrontValue,
 } from './post.js';
 
 const SITE_PATH = 'site.json';
@@ -290,25 +290,34 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
     return next;
   }
 
-  /** 저장소의 글 중 category가 `from`인 것을 `to`로 바꾼 `{ files, expect }`. */
-  async function recategorizedPosts(repo, from, to) {
+  /**
+   * 저장소의 글 중 category가 `from`인 것을 `to`로 바꾼 `{ files, expect, hits }`.
+   * `rebased`(경로 → 공개본 sha `{ from, to }`)를 주면, 그 경로 초안의 `base_sha`가 `from`이면 `to`로 바꾼 것도 넣는다
+   * (초안의 카테고리가 이미 다른 것이어도). `hits[].recategorized`는 category 줄을 바꿨는지.
+   */
+  async function recategorizedPosts(repo, from, to, rebased = new Map()) {
     const tree = await gh.listTree(repo);
     const changed = await Promise.all(tree.filter(isPostFile).map(async ({ path }) => {
       const file = await gh.getFile(repo, path);
-      const text = file ? recategorize(file.text, from, to) : null;
-      return text === null ? null : { path, text, sha: file.sha };
+      if (!file) return null;
+      const moved = recategorize(file.text, from, to);
+      const base = rebased.get(path);
+      const text = (base && replaceFrontValue(moved ?? file.text, BASE_SHA, base.from, base.to)) || moved;
+      return text === null ? null : { path, text, sha: file.sha, recategorized: moved !== null };
     }));
     const hits = changed.filter(Boolean);
     return {
       files: hits.map((h) => ({ path: h.path, base64: utf8ToBase64(h.text) })),
       expect: Object.fromEntries(hits.map((h) => [h.path, h.sha])),
+      hits,
     };
   }
 
   /**
    * 카테고리 이름을 바꾼다: 블로그(글 + `site.json`) 한 커밋, 그다음 초안 저장소 한 커밋.
    * 블로그 커밋이 실패하면 초안 저장소는 건드리지 않고 그 오류를 그대로 던진다.
-   * @returns {Promise<{ posts: number, drafts: number }>} 바꾼 공개 글·초안 수
+   * 초안 저장소 커밋에서는 이 이름 바꾸기로 공개본이 바뀐 글의 고치던 초안 `base_sha`도 새 공개본 sha로 옮긴다.
+   * @returns {Promise<{ posts: number, drafts: number }>} 카테고리를 바꾼 공개 글·초안 수(`base_sha`만 옮긴 초안은 세지 않는다)
    * @throws {Error} 기억해 둔 목록 기준의 이름 규칙 위반이나 없는 `from`(GitHub 호출 없음). 지금 `site.json`에 `from`이 없거나
    *   `to`가 이미 있으면(다른 기기가 먼저 바꿈) 아무것도 쓰지 않고 `ConflictError`. 초안 쪽만 실패하면 "블로그는 바뀜, 초안 N편은 그대로"
    *   메시지의 Error(원래 오류는 `cause`).
@@ -338,15 +347,21 @@ export function createStore({ gh, draftsRepo, blogRepo = BLOG_REPO, today = loca
     site = null;
 
     let pending = null;
+    let drafts;
     try {
-      const drafts = await recategorizedPosts(draftsRepo, from, name);
+      // 고치던 초안의 base_sha는 고치기 시작할 때의 공개본 sha라, 방금 커밋으로 바뀐 공개본 sha로 같이 옮기지 않으면
+      // 다시 열어 출간할 때마다 ConflictError가 난다. 이 커밋 전에 이미 다른 곳에서 바뀐 공개본(base_sha ≠ 읽은 sha)은
+      // 옮기지 않아 그 충돌은 그대로 알린다. 새 sha는 GitHub에 다시 묻지 않고 올린 내용으로 계산한다.
+      const rebased = new Map(await Promise.all(blog.hits.map(async (h) => (
+        [h.path, { from: h.sha, to: await gitBlobSha(new TextEncoder().encode(h.text)) }]))));
+      drafts = await recategorizedPosts(draftsRepo, from, name, rebased);
       pending = drafts.files.length;
       if (pending) await gh.commitFiles(draftsRepo, { message, files: drafts.files, deletes: [], expect: drafts.expect });
     } catch (e) {
       const left = pending === null ? '초안은 그대로' : `초안 ${pending}편은 그대로`;
       throw new Error(`블로그는 바뀜, ${left}예요. 초안의 카테고리는 다시 시도하거나 직접 고쳐 주세요. (${e.message})`, { cause: e });
     }
-    return { posts: blog.files.length, drafts: pending };
+    return { posts: blog.files.length, drafts: drafts.hits.filter((h) => h.recategorized).length };
   }
 
   return {

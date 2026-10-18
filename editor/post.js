@@ -129,6 +129,24 @@ export function validateCategoryName(name, existing) {
 }
 
 /**
+ * 글의 머리말에서 `key` 줄의 값이 `from`이면 그 값만 `to`로 바꾼다. 다른 줄·본문·줄바꿈(CRLF 포함)은 그대로 둔다.
+ * 값을 감싼 따옴표는 비교할 때만 벗긴다.
+ * @param {string} text 글 파일 전체
+ * @param {string} key 머리말 키. 정규식에 그대로 넣으므로 영문·숫자·`_`만 쓴다.
+ * @param {string} from 지금 값
+ * @param {string} to 새 값
+ * @returns {string|null} 바뀐 글 전체. 머리말에 그 키가 없거나 값이 from이 아니면 null.
+ */
+export function replaceFrontValue(text, key, from, to) {
+  const front = /^(﻿?---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/.exec(text);
+  if (!front) return null;
+  const line = new RegExp(`^(${key}[ \\t]*:[ \\t]*)(.*?)([ \\t]*)$`, 'm').exec(front[2]);
+  if (!line || line[2].replace(/^(["'])(.*)\1$/, '$2') !== from) return null;
+  const header = front[2].slice(0, line.index) + line[1] + to + line[3] + front[2].slice(line.index + line[0].length);
+  return front[1] + header + text.slice(front[1].length + front[2].length);
+}
+
+/**
  * 글의 머리말 category 줄만 바꾼다. 다른 줄·본문·줄바꿈(CRLF 포함)은 그대로 둔다.
  * @param {string} text 글 파일 전체
  * @param {string} from 현재 카테고리
@@ -136,10 +154,5 @@ export function validateCategoryName(name, existing) {
  * @returns {string|null} 바뀐 글 전체. category가 from이 아니거나 머리말에 없으면 null.
  */
 export function recategorize(text, from, to) {
-  const front = /^(﻿?---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/.exec(text);
-  if (!front) return null;
-  const line = /^(category[ \t]*:[ \t]*)(.*?)([ \t]*)$/m.exec(front[2]);
-  if (!line || line[2].replace(/^(["'])(.*)\1$/, '$2') !== from) return null;
-  const header = front[2].slice(0, line.index) + line[1] + to + line[3] + front[2].slice(line.index + line[0].length);
-  return front[1] + header + text.slice(front[1].length + front[2].length);
+  return replaceFrontValue(text, 'category', from, to);
 }

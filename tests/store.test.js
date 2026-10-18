@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createStore } from '../editor/store.js';
 import { createLocal } from '../editor/local.js';
-import { GitHubError, AuthError, ConflictError, utf8ToBase64, base64ToUtf8 } from '../editor/github.js';
+import { GitHubError, AuthError, ConflictError, utf8ToBase64, base64ToUtf8, gitBlobSha } from '../editor/github.js';
 import { parsePost, serializePost } from '../editor/post.js';
 
 const BLOG = 'cihwang/cihwang.github.io';
@@ -87,7 +87,11 @@ function fakeGitHub(initial) {
       for (const [path, sha] of Object.entries(change.expect)) {
         if ((files(repo).get(path)?.sha ?? null) !== sha) throw new ConflictError(409, `충돌 (${path})`, path);
       }
-      for (const { path, base64 } of change.files) files(repo).set(path, { base64, sha: nextSha(), updated: '2026-10-16T10:00:00Z' });
+      // 커밋한 파일은 GitHub처럼 내용의 git blob sha를 받는다(store가 계산한 sha와 맞는지 보려고).
+      for (const { path, base64 } of change.files) {
+        const sha = await gitBlobSha(Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)));
+        files(repo).set(path, { base64, sha, updated: '2026-10-16T10:00:00Z' });
+      }
       for (const path of change.deletes) files(repo).delete(path);
       commits.push({ repo, ...change });
       return { commitSha: `commit-${commits.length}` };
@@ -561,6 +565,53 @@ test('renameCategory: 초안 쪽만 실패하면 블로그는 바뀌고 초안 N
     return true;
   }, '부분 실패는 성공이 아니라 오류');
   assert.equal(JSON.parse(fake.text(BLOG, 'site.json')).categories[1], '배움', '블로그는 바뀌었다');
+});
+
+test('renameCategory: 고치던 초안의 base_sha를 새 공개본 sha로 옮겨, 다시 열어 출간해도 충돌하지 않는다. 상관없는 글의 초안은 그대로', async () => {
+  const fake = renameFake();
+  const store = await storeWithSite(fake);
+  const path = 'posts/예시/공부-01.md';
+  const other = 'posts/예시/글-01.md';
+  await store.saveDraft({ ...await store.open({ repo: 'blog', path }), body: '에디터에서 고침\n' });
+  await store.saveDraft({ ...await store.open({ repo: 'blog', path: other }), body: '다른 글 고침\n' });
+  const otherDraft = fake.text(DRAFTS, other);
+  assert.match(otherDraft, new RegExp(`^base_sha: ${fake.sha(BLOG, other)}$`, 'm'), '상관없는 글의 초안에도 base_sha가 있다(전제)');
+
+  const result = await store.renameCategory('공부', '배움');
+  assert.deepEqual(result, { posts: 2, drafts: 2 }, '카테고리를 옮긴 초안은 a와 고치던 공부-01');
+  const liveSha = fake.sha(BLOG, path);
+  assert.match(fake.text(DRAFTS, path), new RegExp(`^base_sha: ${liveSha}$`, 'm'), '고치던 초안의 base_sha가 이름 바꾸기 커밋 뒤의 공개본 sha');
+  assert.equal(fake.text(DRAFTS, other), otherDraft, '이름 바꾸기와 상관없는 글의 초안(base_sha 포함)은 그대로');
+
+  const reopened = await store.open({ repo: 'drafts', path });
+  assert.equal(reopened.blogSha, liveSha, '다시 열면 이름 바꾼 뒤의 공개본 sha로 출간한다');
+  await store.publish({ ...reopened, meta: { ...reopened.meta, slug: '공부-01' } }, LIVE);
+  const published = parsePost(fake.text(BLOG, path));
+  assert.equal(published.meta.category, '배움', '출간한 글은 새 카테고리');
+  assert.equal(published.body, '에디터에서 고침\n', '고친 내용이 출간된다');
+  assert.equal(fake.has(DRAFTS, path), false, '출간 뒤 고치던 초안은 지워진다');
+});
+
+test('renameCategory: 초안의 카테고리를 이미 바꿨어도 base_sha는 따라 옮기고, 그 전에 공개본이 직접 바뀌었으면 base_sha를 남겨 충돌을 알린다', async () => {
+  const fake = renameFake();
+  const store = await storeWithSite(fake);
+  const moved = 'posts/예시/공부-02.md';
+  const stale = 'posts/예시/공부-01.md';
+  const movedDoc = await store.open({ repo: 'blog', path: moved });
+  await store.saveDraft({ ...movedDoc, meta: { ...movedDoc.meta, category: '글' } });
+  await store.saveDraft({ ...await store.open({ repo: 'blog', path: stale }), body: '에디터에서 고침\n' });
+  const staleBase = fake.sha(BLOG, stale);
+  // 에디터 밖에서 공개본을 직접 고친다(카테고리는 그대로).
+  fake.overwrite(BLOG, stale, post({ title: '공부 01', category: '공부', date: '2026-01-05' }, '직접 고침\n'));
+
+  await store.renameCategory('공부', '배움');
+  const movedDraft = parsePost(fake.text(DRAFTS, moved));
+  assert.equal(movedDraft.meta.base_sha, fake.sha(BLOG, moved), '카테고리를 이미 바꾼 초안도 공개본이 이름 바꾸기로 바뀌었으면 base_sha를 옮긴다');
+  assert.equal(movedDraft.meta.category, '글', '초안에서 고른 카테고리는 그대로');
+  assert.equal(parsePost(fake.text(DRAFTS, stale)).meta.base_sha, staleBase, '이미 직접 바뀐 공개본이면 base_sha를 옮기지 않는다');
+  const reopened = await store.open({ repo: 'drafts', path: stale });
+  await assert.rejects(store.publish({ ...reopened, meta: { ...reopened.meta, slug: '공부-01' } }, LIVE), ConflictError, '직접 고친 공개본은 이름 바꾸기 뒤에도 덮지 않는다');
+  assert.equal(parsePost(fake.text(BLOG, stale)).body, '직접 고침\n', '직접 고친 공개본이 남는다');
 });
 
 test('renameCategory: 새 이름 규칙에 걸리거나 없는 카테고리면 GitHub 호출 없이 오류', async () => {
